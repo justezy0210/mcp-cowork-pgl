@@ -74,7 +74,14 @@ class BodyLimit:
         await self.app(scope, bounded_receive, send)
 
 
-def create_app(hub: Hub, destinations: Destinations | None = None, *, background=True):
+def create_app(
+    hub: Hub,
+    destinations: Destinations | None = None,
+    *,
+    background=True,
+    web_config=None,
+    web_verify=None,
+):
     changed = asyncio.Event()
     revision = new_id()
     notifier = Notifier(hub, destinations) if destinations else None
@@ -121,6 +128,9 @@ def create_app(hub: Hub, destinations: Destinations | None = None, *, background
 
     app = FastAPI(title="cowork-hub", version="0.1.0", lifespan=lifespan)
     app.add_middleware(BodyLimit)
+    from .web_api import mount_web
+
+    mount_web(app, hub, web_config, web_verify)
 
     @app.exception_handler(Error)
     async def hub_error(request: Request, exc: Error):

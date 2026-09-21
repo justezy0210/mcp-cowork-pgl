@@ -1,0 +1,50 @@
+:root { color-scheme: light; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans KR", sans-serif; color: #172c2a; background: #f5f7f5; font-size: 15px; }
+* { box-sizing: border-box; }
+body { margin: 0; }
+[hidden] { display: none !important; }
+.header { height: 82px; border-bottom: 1px solid #dce4df; padding: 0 max(24px, calc((100vw - 1080px) / 2)); display: flex; align-items: center; justify-content: space-between; background: #fff; }
+a { color: #216957; text-underline-offset: 4px; }
+.brand { display: flex; align-items: center; gap: 9px; text-decoration: none; font-size: 26px; font-weight: 750; letter-spacing: -1px; color: #172c2a; }
+.brand-mark { display: grid; place-items: center; width: 32px; height: 32px; color: white; background: #296d58; border-radius: 9px; padding-bottom: 4px; }
+.lab { font-size: 11px; letter-spacing: 1px; border-left: 1px solid #dce4df; padding-left: 12px; margin-left: 5px; color: #647570; }
+#account { display: flex; align-items: center; gap: 12px; font-size: 13px; }
+main { max-width: 800px; padding: 48px 24px 24px; margin: auto; }
+.eyebrow, .step { color: #5c776b; font-size: 11px; letter-spacing: 1px; font-weight: 700; }
+h1 { font-size: 38px; letter-spacing: -1.8px; margin: 12px 0; }
+h2 { font-size: 21px; letter-spacing: -.6px; margin: 10px 0 12px; }
+p { line-height: 1.75; color: #53645d; margin: 12px 0; word-break: keep-all; }
+.intro { font-size: 16px; margin-bottom: 30px; }
+.card { background: #fff; border: 1px solid #dce4df; border-radius: 14px; padding: 28px; margin-bottom: 20px; }
+.login-card { padding-top: 38px; padding-bottom: 32px; }
+.login-card button { margin-top: 12px; }
+label { display: block; font-size: 13px; font-weight: 650; margin: 22px 0 8px; }
+.form-row { display: flex; gap: 10px; }
+input { min-width: 0; flex: 1; width: 100%; padding: 12px 14px; background: #fafcfb; border: 1px solid #c6d3ca; border-radius: 7px; font: inherit; }
+button { border: 1px solid transparent; padding: 12px 17px; border-radius: 7px; background: #296d58; color: white; font: inherit; font-size: 14px; font-weight: 600; cursor: pointer; white-space: nowrap; }
+button:hover { background: #205441; }
+button:disabled { opacity: .5; cursor: default; }
+button.secondary { border-color: #ccd7cf; color: #294e3f; background: white; }
+button.quiet { background: transparent; color: #486557; padding: 8px; }
+button.danger { background: #9b3937; }
+button:focus-visible, a:focus-visible, input:focus-visible { outline: 3px solid #86bcaa; outline-offset: 3px; }
+.muted { font-size: 12px; color: #63756b; }
+.download-card { border-color: #9fbfad; background: #eef7f0; }
+.actions { display: flex; flex-wrap: wrap; gap: 10px; margin: 20px 0; }
+code { background: #e2eee5; padding: 2px 5px; border-radius: 4px; }
+.section-head { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
+#token-list { list-style: none; padding: 0; margin: 6px 0 18px; }
+.token-row { display: flex; align-items: center; justify-content: space-between; gap: 14px; padding: 20px 0; border-bottom: 1px solid #e5ebe7; }
+.token-info { min-width: 0; }
+.token-name { display: block; overflow-wrap: anywhere; font-weight: 650; }
+.token-detail { display: block; font-size: 12px; color: #728176; margin-top: 7px; }
+.token-status { display: inline-block; border-radius: 4px; background: #edf5ef; color: #37684c; font-size: 11px; padding: 3px 7px; margin-left: 7px; }
+.revoked { color: #707b73; background: #edf0ed; }
+.empty { background: #f7f9f6; text-align: center; border-radius: 8px; padding: 30px 16px; font-size: 14px; }
+.next-step { padding: 16px 4px 10px; }
+.next-step h2 { font-size: 18px; }
+.next-step a { font-size: 14px; font-weight: 600; }
+footer { font-size: 11px; color: #7b8980; border-top: 1px solid #dce4df; margin-top: 38px; padding-top: 20px; }
+#message { border-radius: 8px; padding: 13px 16px; background: #fff1eb; color: #8b4934; margin-bottom: 20px; line-height: 1.65; }
+dialog { max-width: 460px; width: calc(100% - 32px); border: 1px solid #dce4df; border-radius: 14px; padding: 28px; color: #172c2a; }
+dialog::backdrop { background: #132c2460; }
+@media (max-width: 560px) { .header { padding: 0 18px; height: 70px; } main { padding: 28px 18px; } h1 { font-size: 32px; } .card { padding: 22px; } .form-row { flex-direction: column; } .form-row button { width: 100%; } #user-name { max-width: 120px; overflow: hidden; text-overflow: ellipsis; } .token-row { gap: 8px; } }

@@ -15,9 +15,9 @@ LLM·MCP 세션 없이 요청을 받아 기존 사용자 SSH로 대상을 검사
 - 배포용 소스 압축파일과 SHA-256 파일 생성. `.local`, 토큰, SSH 키, 가상환경은 배포하지 않는다.
 
 소스 배포 저장소는 [justezy0210/mcp-cowork-pgl](https://github.com/justezy0210/mcp-cowork-pgl)이다.
-웹 로그인·관리 화면, Firebase 연동과 버전별 GitHub Release 게시는 아직 수행하지 않았다.
-현재 관리 API는 기존 사용자·관리자 Bearer 인증을 사용한다. 신규 사용자의 최초 웹 로그인은
-향후 웹 인증에서 허브 사용자와 연결해야 하며, 이 API만으로 계정 생성·서버 권한 부여를 하지 않는다.
+Google 로그인·토큰 발급/다운로드 화면과 별도 웹 인증 API를 구현했다. [웹 토큰 안내](web-tokens.md)를 참고한다.
+Firebase 운영 연결, SSH·관리자 화면과 버전별 GitHub Release 게시는 남아 있다.
+기존 연결 프로그램 API는 사용자·관리자 Bearer 인증을 사용한다. 웹 로그인만으로 허브 사용자 생성이나 서버 권한 부여를 하지 않는다.
 
 ## 현재 운영 적용 상태 (2026-09-21)
 
@@ -91,8 +91,8 @@ python3 scripts/enable_local_runner.py --user ezy \
   --config /shared/my-user/cowork/connector.json
 ```
 
-새 사용자는 현재 관리자가 제공한 개인 토큰을 본인 소유 `0600` 일반 파일로 준비한 뒤 다음을 사용한다.
-웹에서 토큰을 발급받는 화면은 후속 구현 범위다.
+새 사용자는 웹에서 다운로드하거나 관리자가 제공한 개인 토큰을 본인 소유 `0600` 일반 파일로 준비한 뒤 다음을 사용한다.
+웹 발급은 [Google 로그인 운영 설정](web-tokens.md)을 먼저 적용해야 한다.
 토큰 값은 명령 인자에 넣지 않는다. 허브에 해당 사용자의 UID/GID와 서버 권한이 먼저 등록돼 있어야 한다.
 
 ```sh

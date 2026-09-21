@@ -4,7 +4,7 @@ COPY --from=uv /uv /usr/local/bin/uv
 WORKDIR /app
 COPY pyproject.toml uv.lock ./
 COPY src ./src
-RUN uv sync --frozen --no-dev --no-editable --no-cache \
+RUN uv sync --frozen --extra web --no-dev --no-editable --no-cache \
     && groupadd --gid 10001 hub \
     && useradd --uid 10001 --gid hub --no-create-home hub \
     && mkdir /data && chown hub:hub /data && chmod 700 /data

@@ -24,6 +24,7 @@ def install(prefix, source, *, wheelhouse=None):
     fingerprint = hashlib.sha256()
     inputs = [source / "pyproject.toml", source / "requirements-client.txt"]
     inputs += sorted((source / "src/cowork_hub").glob("*.py"))
+    inputs += sorted((source / "src/cowork_hub/web").glob("*"))
     for path in inputs:
         fingerprint.update(str(path.relative_to(source)).encode() + b"\0" + path.read_bytes())
     source_hash = fingerprint.hexdigest()

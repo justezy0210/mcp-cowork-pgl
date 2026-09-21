@@ -13,6 +13,7 @@ from .models import Error
 from .notifications import Destinations
 from .service import Hub
 from .store import Store
+from .web_auth import load_web_config
 
 
 def main():
@@ -76,7 +77,7 @@ def main():
                 url=os.getenv("DISCORD_WEBHOOK_URL"),
             )
         uvicorn.run(
-            create_app(hub, destinations),
+            create_app(hub, destinations, web_config=load_web_config()),
             host=args.host,
             port=args.port,
             workers=1,

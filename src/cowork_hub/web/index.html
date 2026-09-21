@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="referrer" content="no-referrer">
+  <title>개인 토큰 · Cowork</title>
+  <link rel="icon" href="./favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="./style.css">
+  <script type="module" src="./app.js"></script>
+</head>
+<body>
+  <header class="header">
+    <a class="brand" href="./"><span class="brand-mark" aria-hidden="true">c</span>cowork<span class="lab">PGL</span></a>
+    <div id="account" hidden><span id="user-name"></span><button id="logout" class="quiet">로그아웃</button></div>
+  </header>
+  <main>
+    <p class="eyebrow">연구실 작업 환경</p>
+    <h1>개인 토큰</h1>
+    <p class="intro">내 컨테이너와 에이전트를 연구실 허브에 연결하세요.</p>
+    <div id="message" role="status" aria-live="polite" hidden></div>
+
+    <section id="login-panel" class="card login-card" aria-labelledby="login-title">
+      <span class="step">01 / 계정 확인</span>
+      <h2 id="login-title">본인 계정으로 시작하기</h2>
+      <p>관리자가 허용한 계정으로 로그인하면 개인 토큰을 발급받을 수 있습니다.</p>
+      <button id="login" disabled>로그인 준비 중…</button>
+      <p id="login-help" class="muted">로그인 설정을 확인하고 있습니다.</p>
+    </section>
+
+    <div id="workspace" hidden>
+      <section class="card" aria-labelledby="create-title">
+        <span class="step">연결 준비</span>
+        <h2 id="create-title">새 토큰 만들기</h2>
+        <p>사용할 곳을 이름으로 적어 두면 나중에 구분하기 쉽습니다.</p>
+        <form id="create-form">
+          <label for="token-name">토큰 이름</label>
+          <div class="form-row"><input id="token-name" name="name" maxlength="200" required autocomplete="off" placeholder="예: 226-Codex"><button id="create" type="submit">토큰 발급</button></div>
+        </form>
+        <p class="muted">토큰은 발급 직후에만 받을 수 있습니다. 기존 토큰은 계속 유지됩니다.</p>
+      </section>
+
+      <section id="download-panel" class="card download-card" aria-labelledby="download-title" hidden>
+        <span class="step">발급 완료</span>
+        <h2 id="download-title">토큰 파일을 저장하세요</h2>
+        <p><strong id="issued-name"></strong>에 사용할 개인 토큰이 준비됐습니다.</p>
+        <div class="actions"><button id="download">user.token 다운로드</button><button id="dismiss-download" class="secondary">저장 완료</button></div>
+        <p class="muted">다운로드한 파일을 본인 컨테이너의 토큰 경로에 두고 권한을 <code>600</code>으로 설정하세요. 이 화면을 닫으면 다시 다운로드할 수 없습니다.</p>
+      </section>
+
+      <section class="card" aria-labelledby="list-title">
+        <div class="section-head"><div><span class="step">내 연결 관리</span><h2 id="list-title">발급한 토큰</h2></div><button id="refresh" class="secondary">새로고침</button></div>
+        <p id="empty" class="empty" hidden>아직 발급한 토큰이 없습니다. 위에서 첫 토큰을 만들어 보세요.</p>
+        <ul id="token-list" aria-label="개인 토큰 목록"></ul>
+        <button id="load-more" class="quiet" hidden>더 보기</button>
+        <p class="muted">이 화면에서 발급한 토큰을 관리합니다. 관리자가 처음 전달한 기존 토큰은 이 목록에 표시되지 않습니다.</p>
+      </section>
+
+      <aside class="next-step"><span class="step">다음 단계</span><h2>메인 컨테이너에 연결하기</h2><p>토큰 파일을 준비한 뒤 설치 안내에 따라 연결 프로그램과 MCP를 설정하세요.</p><a href="https://github.com/justezy0210/mcp-cowork-pgl/blob/main/docs/first-user-guide.md" target="_blank" rel="noopener noreferrer">처음 사용자 설치 안내 <span aria-hidden="true">↗</span></a></aside>
+    </div>
+    <footer>토큰에 연결되는 서버 권한은 관리자가 설정한 본인 권한을 따릅니다.</footer>
+  </main>
+
+  <dialog id="revoke-dialog" aria-labelledby="revoke-title">
+    <h2 id="revoke-title">이 토큰을 폐기할까요?</h2>
+    <p><strong id="revoke-name"></strong>을 사용하는 연결 프로그램과 실행기의 허브 접속이 끊깁니다. 사용 중이라면 먼저 새 토큰으로 교체하세요.</p>
+    <p class="muted">기존 작업을 취소하거나 예약을 반환하는 동작은 아닙니다.</p>
+    <div class="actions"><button id="revoke-cancel" class="secondary">돌아가기</button><button id="revoke-confirm" class="danger">토큰 폐기</button></div>
+  </dialog>
+</body>
+</html>

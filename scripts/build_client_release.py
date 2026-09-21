@@ -24,12 +24,14 @@ def build(source, output):
             "Dockerfile",
             "compose.yaml",
             ".dockerignore",
+            "config/web.example.json",
         )
     ]
     selected += sorted((source / "scripts").glob("*.py"))
     selected += sorted((source / "docs").glob("*.md"))
     selected += sorted((source / "plans").glob("*.md"))
     selected += sorted((source / "src/cowork_hub").glob("*.py"))
+    selected += sorted((source / "src/cowork_hub/web").glob("*"))
     selected += sorted((source / "skills/cowork-jobs").rglob("*.md"))
     selected += sorted((source / "skills/cowork-jobs").rglob("*.yaml"))
     for path in selected:
