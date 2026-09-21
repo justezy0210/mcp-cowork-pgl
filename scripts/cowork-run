@@ -1,0 +1,4 @@
+#!/bin/sh
+# Use this checkout's environment; no installation into the user's system is needed.
+cowork_project_dir=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+exec "$cowork_project_dir/.venv/bin/python" -m cowork_hub.runner "$@"

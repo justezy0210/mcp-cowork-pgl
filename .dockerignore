@@ -1,0 +1,12 @@
+.git
+.venv
+.local
+.pytest_cache
+.ruff_cache
+**/__pycache__
+**/*.sqlite3*
+**/*.token
+.env
+secrets
+tests
+plans

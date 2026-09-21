@@ -1,0 +1,14 @@
+.venv/
+.local/
+.agents/
+.codex/
+.pytest_cache/
+.ruff_cache/
+__pycache__/
+*.py[cod]
+*.sqlite3*
+.env
+*.token
+secrets/
+dist/
+*.egg-info/

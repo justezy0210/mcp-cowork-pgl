@@ -1,0 +1,201 @@
+{
+  "schema_version": 1,
+  "status": "nodes_registered_environments_unverified",
+  "hub_url": "http://192.168.10.41:8080",
+  "hub_health": "ok",
+  "user_id": "ezy",
+  "requested_allowed_nodes": [
+    "229",
+    "228",
+    "226",
+    "224"
+  ],
+  "notes": [
+    "Registration status is updated only after a successful authenticated registration; inventory observations alone do not confirm live registration.",
+    "Resource observations were made inside personal containers. The user approved all observed CPUs and 90 percent of observed total RAM; physical host/Worker verification remains pending.",
+    "Container hostnames are observations, not verified immutable Docker container IDs.",
+    "GPU inventory null means unknown, not zero GPUs.",
+    "The SSH route for 226 was not provided; observations there came from the current container."
+  ],
+  "nodes": [
+    {
+      "id": "229",
+      "host_address": "203.255.11.229",
+      "ssh": {
+        "host": "203.255.11.229",
+        "user": "ezy",
+        "port": 11010
+      },
+      "observation_source": "ssh",
+      "observed": {
+        "container_hostname": "fc5b36a891d5",
+        "uid": 1101,
+        "gid": 1100,
+        "logical_cpus_visible": 64,
+        "cpu_affinity_count": 64,
+        "memory_total_kib_visible": 1583913852,
+        "in_container": true,
+        "docker_socket_present": false,
+        "gpus_visible": [
+          {
+            "id": "GPU-0d30384f-af38-68a6-0786-e0b12dafcd5c",
+            "model": "NVIDIA GeForce GTX 1080 Ti",
+            "memory_mib": 11264
+          },
+          {
+            "id": "GPU-d0e49379-bc90-5ed3-4901-0c1717589722",
+            "model": "NVIDIA GeForce RTX 2080 Ti",
+            "memory_mib": 11264
+          },
+          {
+            "id": "GPU-3e554084-64db-a82f-419a-4d75eece4e3b",
+            "model": "NVIDIA GeForce RTX 3090",
+            "memory_mib": 24576
+          },
+          {
+            "id": "GPU-c4c8bf04-90f5-1eba-264e-f96f162e6fb8",
+            "model": "NVIDIA GeForce GTX 1080 Ti",
+            "memory_mib": 11264
+          }
+        ]
+      },
+      "verified_container_id": null,
+      "host_worker_verified": false,
+      "budget": {
+        "cpus": 64,
+        "memory_mib": 1392111,
+        "gpu_ids": [
+          "GPU-0d30384f-af38-68a6-0786-e0b12dafcd5c",
+          "GPU-d0e49379-bc90-5ed3-4901-0c1717589722",
+          "GPU-3e554084-64db-a82f-419a-4d75eece4e3b",
+          "GPU-c4c8bf04-90f5-1eba-264e-f96f162e6fb8"
+        ]
+      },
+      "registration_status": "node_registered_environment_unverified"
+    },
+    {
+      "id": "228",
+      "host_address": "203.255.11.228",
+      "ssh": {
+        "host": "203.255.11.228",
+        "user": "ezy",
+        "port": 11019
+      },
+      "observation_source": "ssh",
+      "observed": {
+        "container_hostname": "26073e7bf221",
+        "uid": 1101,
+        "gid": 1100,
+        "logical_cpus_visible": 40,
+        "cpu_affinity_count": 40,
+        "memory_total_kib_visible": 1585232040,
+        "in_container": true,
+        "docker_socket_present": true,
+        "gpus_visible": [
+          {
+            "id": "GPU-561670c9-8177-23fd-16f2-d48e47f3d7bd",
+            "model": "NVIDIA GeForce GTX 1080 Ti",
+            "memory_mib": 11264
+          }
+        ]
+      },
+      "verified_container_id": null,
+      "host_worker_verified": false,
+      "budget": {
+        "cpus": 40,
+        "memory_mib": 1393270,
+        "gpu_ids": [
+          "GPU-561670c9-8177-23fd-16f2-d48e47f3d7bd"
+        ]
+      },
+      "registration_status": "node_registered_environment_unverified"
+    },
+    {
+      "id": "226",
+      "host_address": "203.255.11.226",
+      "ssh": null,
+      "observation_source": "current_container",
+      "observed": {
+        "container_hostname": "b7c7d9a918a5",
+        "uid": 1101,
+        "gid": 1100,
+        "logical_cpus_visible": 64,
+        "cpu_affinity_count": 64,
+        "memory_total_kib_visible": 1056306952,
+        "in_container": true,
+        "docker_socket_present": true,
+        "gpus_visible": [],
+        "gpu_inventory_source": "user_confirmed_no_gpu"
+      },
+      "verified_container_id": null,
+      "host_worker_verified": false,
+      "budget": {
+        "cpus": 64,
+        "memory_mib": 928394,
+        "gpu_ids": []
+      },
+      "registration_status": "node_registered_environment_unverified"
+    },
+    {
+      "id": "224",
+      "host_address": "203.255.11.224",
+      "ssh": {
+        "host": "203.255.11.224",
+        "user": "ezy",
+        "port": 11010
+      },
+      "observation_source": "ssh",
+      "observed": {
+        "container_hostname": "ed28fcada6e7",
+        "uid": 1101,
+        "gid": 1100,
+        "logical_cpus_visible": 512,
+        "cpu_affinity_count": 512,
+        "memory_total_kib_visible": 1056286624,
+        "in_container": true,
+        "docker_socket_present": false,
+        "gpus_visible": [
+          {
+            "id": "GPU-14beb2a4-1d78-c578-5975-be03048a383c",
+            "model": "NVIDIA H100 NVL",
+            "memory_mib": 95830
+          },
+          {
+            "id": "GPU-047581c4-51bf-23c1-66d8-e21c0f065406",
+            "model": "NVIDIA H100 NVL",
+            "memory_mib": 95830
+          },
+          {
+            "id": "GPU-2483d753-b52c-d6c0-f3da-895065980a3e",
+            "model": "NVIDIA H100 NVL",
+            "memory_mib": 95830
+          },
+          {
+            "id": "GPU-6af5c21f-7646-705a-8a28-73b71cf181ba",
+            "model": "NVIDIA H100 NVL",
+            "memory_mib": 95830
+          }
+        ]
+      },
+      "verified_container_id": null,
+      "host_worker_verified": false,
+      "budget": {
+        "cpus": 512,
+        "memory_mib": 928376,
+        "gpu_ids": [
+          "GPU-14beb2a4-1d78-c578-5975-be03048a383c",
+          "GPU-047581c4-51bf-23c1-66d8-e21c0f065406",
+          "GPU-2483d753-b52c-d6c0-f3da-895065980a3e",
+          "GPU-6af5c21f-7646-705a-8a28-73b71cf181ba"
+        ]
+      },
+      "registration_status": "node_registered_environment_unverified"
+    }
+  ],
+  "budget_policy": {
+    "cpu": "all_observed_logical_cpus",
+    "memory_percent": 90,
+    "memory_rounding": "floor_to_MiB",
+    "source": "user_confirmed"
+  }
+}

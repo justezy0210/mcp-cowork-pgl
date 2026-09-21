@@ -1,0 +1,24 @@
+services:
+  hub:
+    build: .
+    init: true
+    restart: unless-stopped
+    ports:
+      - "${HUB_BIND_ADDRESS:-127.0.0.1}:8080:8080"
+    volumes:
+      - hub-data:/data
+    mem_limit: 1g
+    read_only: true
+    tmpfs:
+      - /tmp:size=16m,mode=1777
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/healthz', timeout=2)"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+volumes:
+  hub-data:
