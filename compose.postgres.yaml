@@ -1,0 +1,29 @@
+# Add to compose.yaml and the existing local settings on the actual hub host.
+services:
+  postgres:
+    image: postgres:17-bookworm
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: cowork
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD_FILE: /run/secrets/postgres_admin_password
+    secrets:
+      - postgres_admin_password
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d cowork"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+    mem_limit: 1g
+    shm_size: 128m
+  hub:
+    depends_on:
+      postgres:
+        condition: service_healthy
+volumes:
+  postgres-data:
+secrets:
+  postgres_admin_password:
+    file: ./.local/postgres/admin-password

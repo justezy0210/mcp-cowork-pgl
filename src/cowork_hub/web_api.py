@@ -9,6 +9,7 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from fastapi.staticfiles import StaticFiles
 
 from .connector_models import TokenCreate
+from .onboarding import Enrollment, Onboarding
 from .web_auth import WebIdentity
 
 
@@ -30,12 +31,25 @@ def security_headers(config=None):
     }
 
 
-def mount_web(app, hub, config=None, verify=None):
+def mount_web(app, hub, config=None, verify=None, *, destinations=None):
     identity = WebIdentity(hub, config, verify)
     bearer = HTTPBearer(auto_error=False)
 
     def user(credential: HTTPAuthorizationCredentials | None = Depends(bearer)):
         return identity.authenticate(credential.credentials if credential else None)
+
+    def google_user(credential: HTTPAuthorizationCredentials | None = Depends(bearer)):
+        return identity.google_user(credential.credentials if credential else None)
+
+    onboarding = Onboarding(hub, config, destinations)
+
+    @app.get("/v1/web/onboarding")
+    def onboarding_status(principal=Depends(google_user)):
+        return onboarding.status(principal)
+
+    @app.post("/v1/web/onboarding", status_code=201)
+    def enroll(body: Enrollment, principal=Depends(google_user)):
+        return onboarding.submit(principal, body)
 
     if config and config.allowed_origins:
         app.add_middleware(
@@ -65,6 +79,10 @@ def mount_web(app, hub, config=None, verify=None):
     def me(principal=Depends(user)):
         return principal
 
+    @app.get("/v1/web/notifications")
+    def notification_status(principal=Depends(user)):
+        return hub.notification_status(principal["user_id"])
+
     @app.get("/v1/web/tokens")
     def tokens(
         limit: int = Query(100, ge=1, le=100),
@@ -81,4 +99,11 @@ def mount_web(app, hub, config=None, verify=None):
     def revoke_token(token_id: str, principal=Depends(user)):
         return hub.management.revoke_token(principal["user_id"], token_id)
 
-    app.mount("/web", StaticFiles(directory=Path(__file__).parent / "web", html=True), name="web")
+    from .server_web_api import mount_servers
+
+    mount_servers(app, hub, config, user, destinations=destinations, onboarding=onboarding)
+    app.mount(
+        "/web",
+        StaticFiles(directory=Path(__file__).parent / "web/dist", html=True, check_dir=False),
+        name="web",
+    )

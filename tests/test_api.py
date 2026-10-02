@@ -9,6 +9,67 @@ def auth(token):
     return {"Authorization": f"Bearer {token}"}
 
 
+def test_cluster_only_exposes_authenticated_users_current_grants(rig):
+    with TestClient(create_app(rig.hub, background=False)) as client:
+        assert (
+            client.post(
+                "/v1/admin/nodes",
+                headers=auth(rig.admin),
+                json={"id": "B", "cpus": 4, "memory_mib": 8192},
+            ).status_code
+            == 201
+        )
+        assert (
+            client.put(
+                "/v1/admin/users/bob/grants",
+                headers=auth(rig.admin),
+                json={"allowed_nodes": ["B"]},
+            ).status_code
+            == 200
+        )
+        rig.submit(cpus=2)
+
+        assert client.get("/v1/cluster").status_code == 401
+        assert client.get("/v1/cluster", headers=auth(rig.worker)).status_code == 403
+        alice = client.get("/v1/cluster", headers=auth(rig.alice))
+        assert alice.status_code == 200
+        assert [node["id"] for node in alice.json()] == ["A"]
+        assert alice.json()[0]["reserved_cpus"] == 2
+        bob = client.get("/v1/cluster", headers=auth(rig.bob))
+        assert bob.status_code == 200
+        assert [node["id"] for node in bob.json()] == ["B"]
+        assert bob.json()[0]["reserved_cpus"] == 0
+        # Caller-supplied identities and node IDs cannot widen token permissions.
+        assert (
+            client.get(
+                "/v1/cluster",
+                headers=auth(rig.alice),
+                params={"user_id": "bob", "node_id": "B"},
+            ).json()
+            == alice.json()
+        )
+        assert (
+            client.put(
+                "/v1/admin/users/alice/grants",
+                headers=auth(rig.alice),
+                json={"allowed_nodes": ["A", "B"]},
+            ).status_code
+            == 403
+        )
+        assert (
+            client.put(
+                "/v1/admin/users/alice/grants",
+                headers=auth(rig.admin),
+                json={"allowed_nodes": []},
+            ).status_code
+            == 200
+        )
+        assert client.get("/v1/cluster", headers=auth(rig.alice)).json() == []
+        assert [node["id"] for node in client.get("/v1/cluster", headers=auth(rig.bob)).json()] == [
+            "B"
+        ]
+
+
 def test_roles_ownership_and_error_redaction(rig):
     with TestClient(create_app(rig.hub, background=False)) as client:
         assert client.get("/healthz").status_code == 200

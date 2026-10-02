@@ -5,6 +5,8 @@ import os
 import sqlite3
 from pathlib import Path
 
+SCHEMA_VERSION = 7
+
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS principals (
   id TEXT PRIMARY KEY, role TEXT NOT NULL, token_hash TEXT NOT NULL UNIQUE,
@@ -91,18 +93,59 @@ CREATE TABLE IF NOT EXISTS registration_requests (
   UNIQUE(user_id, request_key)
 );
 CREATE INDEX IF NOT EXISTS registration_queue ON registration_requests(connector_id,state,created_at);
-PRAGMA user_version = 4;
+CREATE TABLE IF NOT EXISTS server_access_requests (
+  id TEXT PRIMARY KEY, user_id TEXT NOT NULL REFERENCES principals(id),
+  node_id TEXT NOT NULL REFERENCES nodes(id), uid INTEGER NOT NULL, gid INTEGER NOT NULL,
+  port INTEGER NOT NULL, request_key TEXT NOT NULL, request_hash TEXT NOT NULL,
+  state TEXT NOT NULL DEFAULT 'PENDING', created_at REAL NOT NULL,
+  reviewed_at REAL, reviewed_by TEXT REFERENCES principals(id),
+  UNIQUE(user_id, request_key)
+);
+CREATE UNIQUE INDEX IF NOT EXISTS one_pending_server_request
+  ON server_access_requests(user_id,node_id) WHERE state='PENDING';
+CREATE TABLE IF NOT EXISTS web_accounts (
+  firebase_uid TEXT PRIMARY KEY, user_id TEXT NOT NULL UNIQUE REFERENCES principals(id),
+  created_at REAL NOT NULL
+);
+CREATE TABLE IF NOT EXISTS web_audit (
+  id TEXT PRIMARY KEY, actor TEXT NOT NULL REFERENCES principals(id),
+  action TEXT NOT NULL, target TEXT NOT NULL, before_value TEXT NOT NULL,
+  after_value TEXT NOT NULL, created_at REAL NOT NULL
+);
+CREATE TABLE IF NOT EXISTS web_enrollments (
+  id TEXT PRIMARY KEY, firebase_uid TEXT NOT NULL UNIQUE, email TEXT NOT NULL,
+  account_name TEXT NOT NULL, uid INTEGER NOT NULL, gid INTEGER NOT NULL,
+  secret_ref TEXT NOT NULL, channel_id TEXT NOT NULL,
+  state TEXT NOT NULL DEFAULT 'PENDING', created_at REAL NOT NULL,
+  reviewed_at REAL, reviewed_by TEXT REFERENCES principals(id)
+);
+CREATE UNIQUE INDEX IF NOT EXISTS pending_enrollment_name
+  ON web_enrollments(account_name) WHERE state='PENDING';
+CREATE UNIQUE INDEX IF NOT EXISTS pending_enrollment_uid
+  ON web_enrollments(uid) WHERE state='PENDING';
+CREATE TABLE IF NOT EXISTS enrollment_notifications (
+  id TEXT PRIMARY KEY, enrollment_id TEXT NOT NULL,
+  user_id TEXT NOT NULL REFERENCES principals(id), payload TEXT NOT NULL,
+  state TEXT NOT NULL DEFAULT 'PENDING', attempts INTEGER NOT NULL DEFAULT 0,
+  next_attempt REAL NOT NULL, lease_until REAL, message_id TEXT, error_code TEXT,
+  UNIQUE(enrollment_id, user_id)
+);
+PRAGMA user_version = 7;
 """
 
 
 class Store:
+    backend = "sqlite"
+    integrity_error = sqlite3.IntegrityError
+    first_environment_sql = "json_extract(j.spec,'$.environment_ids[0]')"
+
     def __init__(self, path: Path):
         self.path = Path(path)
         self.path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
         new = not self.path.exists()
         with contextlib.closing(self.connect()) as db:
             version = db.execute("PRAGMA user_version").fetchone()[0]
-            if version not in (0, 1, 2, 3, 4):
+            if version not in range(SCHEMA_VERSION + 1):
                 raise RuntimeError("Unsupported database schema version")
             db.execute("PRAGMA journal_mode=WAL")
             # Add tables without rewriting existing jobs, identities or credentials.
@@ -131,3 +174,19 @@ class Store:
             raise
         finally:
             db.close()
+
+
+def configured_store(data_dir):
+    """Explicit PostgreSQL configuration never silently falls back to SQLite."""
+    url_file = os.getenv("HUB_DATABASE_URL_FILE")
+    active = Path(data_dir) / "postgres.url"
+    marker = Path(data_dir) / "database-backend"
+    if marker.exists() and marker.read_text().strip() != "postgresql":
+        raise RuntimeError("Unknown database backend marker; no database was opened")
+    if not url_file and (active.exists() or marker.exists()):
+        url_file = active
+    if url_file:
+        from .postgres import PostgresStore
+
+        return PostgresStore.from_file(Path(url_file))
+    return Store(Path(data_dir) / "hub.sqlite3")

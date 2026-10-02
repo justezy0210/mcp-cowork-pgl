@@ -110,18 +110,20 @@ def test_register_checks_grant_before_ssh(runtime, ssh_transport, tmp_path):
     assert ssh_transport == []
 
 
-def test_remote_registration_is_idempotent_and_requires_approval(runtime, ssh_transport, tmp_path):
+def test_remote_registration_is_idempotent_and_ready_without_approval(
+    runtime, ssh_transport, tmp_path
+):
     hub, config, _ = runtime
     target = registration(tmp_path)
     first = connect(config, target)
     second = connect(config, target)
     assert first["environment_id"] == second["environment_id"]
-    assert first["requires_approval"] and not second["approved"]
+    assert not first["requires_approval"] and second["approved"]
     assert len(hub.list_environments("tester")) == 2
     request = JobSubmit(
-        request_key="pending-approval",
+        request_key="automatic-registration",
         spec={
-            "name": "pending",
+            "name": "automatic",
             "environment_ids": [first["environment_id"]],
             "argv": ["false"],
             "cpus": 1,
@@ -129,10 +131,10 @@ def test_remote_registration_is_idempotent_and_requires_approval(runtime, ssh_tr
             "workdir": str(tmp_path),
         },
     )
-    with pytest.raises(RunnerError, match="ENVIRONMENT_NOT_APPROVED"):
-        send(config, request)
-    assert not hub.list_jobs("tester")
-    hub.local.approve(first["environment_id"])
+    submitted = send(config, request)
+    assert submitted["job_id"]
+    wait_state(hub, submitted, "FAILED")
+    assert len(hub.list_jobs("tester")) == 1
     confirmed = connect(config, target)
     assert confirmed["approved"] and not confirmed["requires_approval"]
     assert len(hub.list_environments("tester")) == 2
@@ -155,7 +157,6 @@ def test_mcp_remote_runner_survives_ssh_exit_retries_lost_reply_and_cancels(
     registered = asyncio.run(
         tool("register_ssh_environment", {"target": registration(tmp_path).model_dump()})
     )
-    hub.local.approve(registered["environment_id"])
     blocker = start("import time; time.sleep(20)")
     wait_state(hub, blocker, "RUNNING")
     marker = tmp_path / "once.txt"
@@ -226,9 +227,10 @@ def test_unknown_environment_never_attempts_ssh(runtime, ssh_transport, tmp_path
     assert not ssh_transport
 
 
-@pytest.mark.parametrize("gpu_id,allowed", [("GPU-visible", True), ("GPU-other-node", False)])
-def test_remote_gpu_registration_checks_physical_uuid(
-    runtime, tmp_path, monkeypatch, gpu_id, allowed
+@pytest.mark.parametrize("local", [False, True])
+@pytest.mark.parametrize("gpu_ids", [[], ["GPU-first", "GPU-second"]])
+def test_registration_uses_node_gpus_without_probing(
+    runtime, tmp_path, monkeypatch, local, gpu_ids
 ):
     hub, config_path, _ = runtime
     hub.create_node(
@@ -236,16 +238,18 @@ def test_remote_gpu_registration_checks_physical_uuid(
             id="B",
             cpus=1,
             memory_mib=256,
-            gpus=[{"id": "GPU-visible", "model": "test", "memory_mib": 1024}],
+            gpus=[{"id": gpu_id, "model": "test", "memory_mib": 1024} for gpu_id in gpu_ids],
         )
     )
     hub.set_grants("tester", ["A", "B"])
     config = json.loads(read_private(config_path))
-    monkeypatch.setattr("cowork_hub.ssh_runner.shutil.which", lambda name: "/usr/bin/nvidia-smi")
+    monkeypatch.setattr(
+        "shutil.which", lambda name: pytest.fail("Registration looked for a GPU tool")
+    )
     monkeypatch.setattr(
         subprocess,
         "run",
-        lambda command, **kwargs: subprocess.CompletedProcess(command, 0, gpu_id + "\n", ""),
+        lambda *args, **kwargs: pytest.fail("Registration launched a GPU probe"),
     )
     payload = {
         "registration": registration(tmp_path, "B").model_dump(),
@@ -253,14 +257,19 @@ def test_remote_gpu_registration_checks_physical_uuid(
         "hub_url": config["hub_url"],
         "token_file": config["token_file"],
     }
-    if allowed:
-        result = prepare_remote(payload)
-        assert result["environment"]["gpu_ids"] == ["GPU-visible"]
-        assert not result["approved"]
-    else:
-        with pytest.raises(RunnerError, match="SSH_GPU_NODE_MISMATCH"):
-            prepare_remote(payload)
-        assert len(hub.list_environments("tester")) == 1
+    result = prepare_remote(payload, local=local)
+    assert result["environment"]["gpu_ids"] == gpu_ids
+    assert result["approved"]
+    assert (result["environment"]["ssh_target"] == "local") is local
+    assert prepare_remote(payload, local=local)["environment_id"] == result["environment_id"]
+    saved = json.loads(read_private(payload["config_path"]))
+    assert saved["environment"]["gpu_ids"] == gpu_ids
+    environment = next(
+        e for e in hub.list_environments("tester") if e["id"] == result["environment_id"]
+    )
+    assert environment["gpu_ids"] == gpu_ids
+    assert environment["status"] == "READY"
+    assert len(hub.list_environments("tester")) == 2
 
 
 def test_plan_marks_ready_remote_route_as_submittable_from_main(runtime, ssh_transport, tmp_path):
@@ -271,7 +280,6 @@ def test_plan_marks_ready_remote_route_as_submittable_from_main(runtime, ssh_tra
     hub.create_node(NodeCreate(id="B", cpus=1, memory_mib=256))
     hub.set_grants("tester", ["A", "B"])
     registered = connect(config_path, registration(tmp_path, "B"))
-    hub.local.approve(registered["environment_id"])
     blocker = start("import time; time.sleep(20)")
     wait_state(hub, blocker, "RUNNING")
     config = json.loads(read_private(config_path))

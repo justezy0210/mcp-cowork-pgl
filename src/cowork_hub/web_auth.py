@@ -39,6 +39,7 @@ def checked_url(value, *, origin=False):
 class WebConfig(Input):
     firebase: FirebaseConfig
     users: dict[str, Identifier] = Field(default_factory=dict, max_length=1000)
+    admin_users: list[Identifier] = Field(default_factory=list, max_length=32)
     allowed_origins: list[str] = Field(default_factory=list, max_length=16)
     api_base_url: str = Field(default="", max_length=2048)
 
@@ -129,7 +130,7 @@ class WebIdentity:
         self.hub, self.config = hub, config
         self.verify = verify or (FirebaseVerifier(config) if config else None)
 
-    def authenticate(self, token):
+    def google_user(self, token):
         if not self.config:
             raise Error("WEB_NOT_CONFIGURED", "Web login has not been configured", 503)
         if not token or len(token) > 16384:
@@ -140,6 +141,8 @@ class WebIdentity:
         if (
             not isinstance(subject, str)
             or not subject
+            or len(subject) > 128
+            or re.search(r"[\x00-\x1f\x7f]", subject)
             or claims.get("sub") != subject
             or claims.get("aud") != self.config.firebase.projectId
             or claims.get("iss")
@@ -149,10 +152,22 @@ class WebIdentity:
             or firebase.get("sign_in_provider") != "google.com"
         ):
             raise Error("UNAUTHENTICATED", "A verified Google sign-in is required", 401)
-        user_id = self.config.users.get(subject)
-        if not user_id:
-            raise Error("WEB_ACCOUNT_NOT_LINKED", "Ask the administrator to link your account", 403)
+        email = claims.get("email", "")
+        return {"firebase_uid": subject, "email": email[:320] if isinstance(email, str) else ""}
+
+    def authenticate(self, token):
+        subject = self.google_user(token)["firebase_uid"]
         with self.hub.store.transaction(write=False) as db:
+            user_id = self.config.users.get(subject)
+            if not user_id:
+                binding = db.execute(
+                    "SELECT user_id FROM web_accounts WHERE firebase_uid=?", (subject,)
+                ).fetchone()
+                user_id = binding["user_id"] if binding else None
+            if not user_id:
+                raise Error(
+                    "WEB_ACCOUNT_NOT_LINKED", "Ask the administrator to link your account", 403
+                )
             row = db.execute(
                 "SELECT id FROM principals WHERE id=? AND role='user' AND enabled=1", (user_id,)
             ).fetchone()

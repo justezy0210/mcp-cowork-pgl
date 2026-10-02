@@ -112,15 +112,15 @@ def register_inside_hub(manifest, data_dir):
     """Local admin import, atomically updating the same resource ledger as the API."""
     from cowork_hub.models import Error, NodeCreate, UserCreate
     from cowork_hub.service import Hub, digest, encode
-    from cowork_hub.store import Store
+    from cowork_hub.store import configured_store
 
     payloads, warnings = prepare(manifest)
     nodes = [NodeCreate.model_validate(payload) for payload in payloads]
     user = UserCreate(id=manifest["user_id"], allowed_nodes=[node.id for node in nodes])
     data_dir = Path(data_dir)
-    if not (data_dir / "hub.sqlite3").is_file() or not (data_dir / "admin.token").is_file():
+    if not (data_dir / "admin.token").is_file():
         raise RegistrationError("Use the initialized hub container and its existing data directory")
-    hub = Hub(Store(data_dir / "hub.sqlite3"))
+    hub = Hub(configured_store(data_dir))
     try:
         admin = hub.authenticate((data_dir / "admin.token").read_text().strip())
     except Error as exc:
@@ -131,8 +131,6 @@ def register_inside_hub(manifest, data_dir):
     credentials, results = [], []
 
     with hub.store.transaction() as db:
-        if db.execute("PRAGMA user_version").fetchone()[0] not in (1, 2, 3, 4):
-            raise RegistrationError("This helper requires hub database schema version 1, 2, 3 or 4")
         # Check the complete batch before modifying nodes, grants, or credentials.
         existing_nodes = {}
         for node in nodes:
@@ -203,7 +201,7 @@ def register_inside_hub(manifest, data_dir):
             )
         # Preserve unrelated existing grants; this invocation only adds approved nodes.
         db.executemany(
-            "INSERT OR IGNORE INTO grants(user_id,node_id) VALUES(?,?)",
+            "INSERT INTO grants(user_id,node_id) VALUES(?,?) ON CONFLICT(user_id,node_id) DO NOTHING",
             [(user.id, node.id) for node in nodes],
         )
     return {

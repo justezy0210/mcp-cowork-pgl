@@ -2,6 +2,7 @@ import concurrent.futures
 
 import pytest
 
+from cowork_hub.migration import TABLES, fingerprint
 from cowork_hub.models import (
     EnvironmentCreate,
     EnvironmentVerification,
@@ -13,7 +14,6 @@ from cowork_hub.models import (
     WorkerEvent,
 )
 from cowork_hub.service import Hub
-from cowork_hub.store import Store
 
 
 def test_finish_releases_resources_and_assigns_next_without_agent(rig):
@@ -66,12 +66,14 @@ def test_plan_is_read_only_and_reduced_argv_is_explicit(rig):
     primary = rig.spec()
     reduced = rig.spec(cpus=4, argv=["python", "analysis.py", "--threads", "4"])
     with rig.hub.store.transaction(write=False) as db:
-        before = list(db.iterdump())
+        before = {table: fingerprint(db.execute(f'SELECT * FROM "{table}"')) for table in TABLES}
     result = rig.hub.plan("alice", PlanRequest(primary=primary, alternatives=[reduced]))
     assert [p["can_start_now"] for p in result["profiles"]] == [False, True]
     assert result["profiles"][1]["spec"]["argv"][-1] == "4"
     with rig.hub.store.transaction(write=False) as db:
-        assert list(db.iterdump()) == before
+        assert {
+            table: fingerprint(db.execute(f'SELECT * FROM "{table}"')) for table in TABLES
+        } == before
 
 
 def test_plan_respects_previously_queued_job(rig):
@@ -166,7 +168,7 @@ def test_disconnect_and_restart_retain_unknown_reservations(rig):
     rig.hub.tick()
     assert rig.state(first) == "UNKNOWN"
     assert rig.state(second) == "QUEUED"
-    rig.hub = Hub(Store(rig.hub.store.path), clock=lambda: rig.now, heartbeat_timeout=30)
+    rig.hub = Hub(rig.reopen_store(), clock=lambda: rig.now, heartbeat_timeout=30)
     rig.heartbeat()
     assert rig.state(first) == "UNKNOWN"
     assert rig.state(second) == "QUEUED"

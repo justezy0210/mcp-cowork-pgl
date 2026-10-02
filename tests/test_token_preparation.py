@@ -69,7 +69,10 @@ def test_hub_side_reader_checks_user_role_and_enabled_state(rig, tmp_path):
     # Exercise the actual embedded reader with a fixture DB and a private test credential.
     root = tmp_path / "hub-data"
     root.mkdir()
-    (root / "hub.sqlite3").symlink_to(rig.hub.store.path)
+    if rig.hub.store.backend == "sqlite":
+        (root / "hub.sqlite3").symlink_to(rig.hub.store.path)
+    else:
+        (root / "postgres.url").write_text(rig.hub.store._url)
     credentials = root / "registration-credentials"
     credentials.mkdir()
     (credentials / "user-alice.token").write_text(rig.alice + "\n")

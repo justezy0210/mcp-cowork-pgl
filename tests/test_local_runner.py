@@ -89,10 +89,8 @@ def test_local_scope_claim_and_atomic_release(rig):
 
     body = {**submission(env).model_dump(), "runner": runner().model_dump()}
     with TestClient(create_app(hub, background=False)) as client:
-        assert client.post("/v1/local/jobs", headers=auth(rig.alice), json=body).status_code == 409
         approve = "/v1/admin/local/environments/" + env + "/approve"
         assert client.post(approve, headers=auth(rig.alice)).status_code == 403
-        assert client.post(approve, headers=auth(rig.admin)).status_code == 200
         first = client.post("/v1/local/jobs", headers=auth(rig.alice), json=body).json()
         second = hub.submit("alice", submission(env, "request-2"), runner=runner(name="runner-2"))
         assert first["state"] == "DISPATCHING" and second["state"] == "QUEUED"
@@ -134,7 +132,6 @@ def test_local_scope_claim_and_atomic_release(rig):
 def test_runner_liveness_is_per_job_and_stale_queued_jobs_do_not_reserve(rig):
     hub = rig.hub
     env = local_env(hub)
-    hub.local.approve(env)
     first = hub.submit("alice", submission(env, cpus=4), runner=runner())
     second = hub.submit(
         "alice", submission(env, "request-2", cpus=4), runner=runner(name="runner-2")
@@ -162,7 +159,6 @@ def test_local_registration_idempotency_identity_grants_and_worker_isolation(rig
     assert local_env(rig.hub) == env
     with pytest.raises(Error):
         local_env(rig.hub, uid=1001)
-    rig.hub.local.approve(env)
     rig.heartbeat()
     assert (
         next(e for e in rig.hub.list_environments("alice") if e["id"] == env)["status"] == "READY"
@@ -199,7 +195,6 @@ def runtime(tmp_path):
         instance="runtime",
         workdir=str(tmp_path),
     )
-    hub.local.approve(env)
     hub.provision_destination("tester", "fake-transport", "123")
     listener = socket.socket()
     listener.bind(("127.0.0.1", 0))
@@ -316,7 +311,6 @@ def test_losing_claim_attempt_cannot_release_the_winning_process(rig):
     from cowork_hub.models import Error
 
     env = local_env(rig.hub)
-    rig.hub.local.approve(env)
     job = rig.hub.submit("alice", submission(env), runner=runner())
     rig.hub.local.claim("alice", job["id"], runner())
     loser = runner().model_copy(update={"claim_id": "claim-loser"})

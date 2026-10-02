@@ -17,6 +17,8 @@ PROJECT = Path(__file__).resolve().parents[1]
 BACKUP = """
 import datetime, os, sqlite3
 from pathlib import Path
+if os.environ.get('HUB_DATABASE_URL_FILE') or (Path(os.environ.get('HUB_DATA_DIR','/data'))/'postgres.url').exists() or (Path(os.environ.get('HUB_DATA_DIR','/data'))/'database-backend').exists():
+    raise RuntimeError('Use pg_dump and the PostgreSQL deployment instructions before upgrading')
 p=Path(os.environ.get('HUB_DATA_DIR','/data'))
 source=sqlite3.connect('file:'+str(p/'hub.sqlite3')+'?mode=ro', uri=True)
 target=p/('hub-before-local-runner-'+datetime.datetime.now(datetime.UTC).strftime('%Y%m%dT%H%M%S%f')+'.sqlite3')
@@ -32,10 +34,10 @@ from pathlib import Path
 from cowork_hub.models import LocalEnvironment, UserIdentity
 from cowork_hub.notifications import Destinations
 from cowork_hub.service import Hub
-from cowork_hub.store import Store
+from cowork_hub.store import configured_store
 payload=json.load(sys.stdin)
 data=Path(os.environ.get('HUB_DATA_DIR','/data'))
-hub=Hub(Store(data/'hub.sqlite3'))
+hub=Hub(configured_store(data))
 admin=hub.authenticate((data/'admin.token').read_text().strip())
 if admin['role'] != 'admin':
     raise RuntimeError('Local administrator credential is required')
@@ -94,6 +96,10 @@ def inside(code, payload=None, *, compose=None):
     )
     if result.returncode:
         # Captured interpreter errors might include input data or private paths; keep output bounded.
+        if code == BACKUP:
+            raise RuntimeError(
+                "Backup failed; PostgreSQL hubs must use the pg_dump/upgrade procedure in docs/postgresql.md"
+            )
         raise RuntimeError(
             "Hub helper failed. Check the hub version, existing account/grants and UID/GID policy."
         )
@@ -128,7 +134,15 @@ def main():
     override = PROJECT / ".local" / "compose.local-runner.yaml"
     if args.discord_metadata:
         metadata = json.loads(args.discord_metadata.read_text())
-        settings = compose_settings(metadata, args.user)
+        settings = (
+            json.loads(override.read_text()) if override.exists() else {"services": {"hub": {}}}
+        )
+        updates = compose_settings(metadata, args.user)["services"]["hub"]
+        hub_settings = settings.setdefault("services", {}).setdefault("hub", {})
+        hub_settings.setdefault("environment", {}).update(updates["environment"])
+        hub_settings["env_file"] = list(
+            dict.fromkeys([*hub_settings.get("env_file", []), *updates["env_file"]])
+        )
         if not os.access(metadata["env_file"], os.R_OK):
             raise RuntimeError("Existing Discord environment file is not readable on this host")
         override.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
@@ -142,6 +156,8 @@ def main():
         f"Confirming local environment: user={args.user}, node={environment['node_id']}, UID:GID={environment['uid']}:{environment['gid']}",
         flush=True,
     )
+    if (PROJECT / ".local" / "postgres" / "admin-password").exists():
+        compose += ["-f", str(PROJECT / "compose.postgres.yaml")]
     if args.upgrade or args.discord_metadata:
         print(inside(BACKUP, compose=compose), flush=True)
         subprocess.run(

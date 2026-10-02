@@ -3,7 +3,6 @@
 import hashlib
 import json
 import secrets
-import sqlite3
 import time
 import uuid
 
@@ -43,12 +42,19 @@ class Hub:
         self.store = store
         self.clock = clock
         self.heartbeat_timeout = heartbeat_timeout
+        # The API installs a thread-safe listener. Publish only after a successful commit.
+        self.on_jobs_changed = None
         from .local import LocalJobs
 
         self.local = LocalJobs(self)
         from .management import Management
 
         self.management = Management(self)
+
+    def jobs_changed(self, job_ids):
+        listener = self.on_jobs_changed
+        if job_ids and listener:
+            listener(frozenset(job_ids))
 
     def bootstrap(self):
         """Return a one-time credential; never overwrite an existing administrator."""
@@ -64,7 +70,7 @@ class Hub:
                 "INSERT INTO principals(id,role,token_hash,node_id) VALUES(?,?,?,?)",
                 (principal_id, role, digest(token), node_id),
             )
-        except sqlite3.IntegrityError as exc:
+        except self.store.integrity_error as exc:
             raise Error("ALREADY_EXISTS", "Principal already exists", 409) from exc
         return token
 
@@ -96,7 +102,7 @@ class Hub:
                         encode([g.model_dump() for g in request.gpus]),
                     ),
                 )
-            except sqlite3.IntegrityError as exc:
+            except self.store.integrity_error as exc:
                 raise Error("ALREADY_EXISTS", "Node already exists", 409) from exc
             token = self._principal(db, f"worker:{request.id}", "worker", request.id)
         return {"id": request.id, "worker_token": token}
@@ -184,7 +190,8 @@ class Hub:
     def set_grants(self, user_id, nodes):
         with self.store.transaction() as db:
             self._grants(db, user_id, nodes)
-            self._schedule(db)
+            changed = self._schedule(db)
+        self.jobs_changed(changed)
 
     @staticmethod
     def _allowed(db, user_id, node_id):
@@ -227,7 +234,9 @@ class Hub:
             if db.execute(
                 "SELECT 1 FROM local_environments WHERE environment_id=?", (env_id,)
             ).fetchone():
-                raise Error("FORBIDDEN", "Local environments use administrator confirmation", 403)
+                raise Error(
+                    "FORBIDDEN", "Local environments are registered by their owning runner", 403
+                )
             env = db.execute("SELECT * FROM environments WHERE id=?", (env_id,)).fetchone()
             if not env or env["node_id"] != node_id:
                 raise Error("NOT_FOUND", "Environment does not exist on this node", 404)
@@ -264,11 +273,12 @@ class Hub:
                         env_id,
                     ),
                 )
-            except sqlite3.IntegrityError as exc:
+            except self.store.integrity_error as exc:
                 raise Error(
                     "CONTAINER_REGISTERED", "This container is already registered", 409
                 ) from exc
-            self._schedule(db)
+            changed = self._schedule(db)
+        self.jobs_changed(changed)
         return {"id": env_id, "status": "READY"}
 
     def list_environments(self, user_id, limit=100, after=""):
@@ -283,8 +293,20 @@ class Hub:
     def heartbeat(self, node_id, request: Heartbeat):
         now = self.clock()
         with self.store.transaction() as db:
+            node = db.execute("SELECT last_seen FROM nodes WHERE id=?", (node_id,)).fetchone()
+            recovered = (
+                node["last_seen"] is None or node["last_seen"] <= now - self.heartbeat_timeout
+            )
+            before = {
+                row["id"]: row["status"]
+                for row in db.execute(
+                    "SELECT id,status FROM environments WHERE node_id=? AND container_id IS NOT NULL "
+                    "AND id NOT IN (SELECT environment_id FROM local_environments)",
+                    (node_id,),
+                )
+            }
             # Expire the old view before accepting a returning node's heartbeat.
-            self._expire(db)
+            changed = self._expire(db) if recovered else set()
             db.execute("UPDATE nodes SET last_seen=? WHERE id=?", (now, node_id))
             db.execute(
                 """UPDATE environments SET status='UNAVAILABLE' WHERE node_id=? AND container_id IS NOT NULL
@@ -315,23 +337,51 @@ class Hub:
                     "UPDATE environments SET status=?,observed_at=? WHERE id=?",
                     ("READY" if ready else "UNAVAILABLE", now, env["id"]),
                 )
-            self._schedule(db)
+            after = {
+                row["id"]: row["status"]
+                for row in db.execute(
+                    "SELECT id,status FROM environments WHERE node_id=? AND container_id IS NOT NULL "
+                    "AND id NOT IN (SELECT environment_id FROM local_environments)",
+                    (node_id,),
+                )
+            }
+            if recovered or before != after:
+                changed.update(self._schedule(db))
+        self.jobs_changed(changed)
         return {"accepted": True}
 
-    def provision_destination(self, user_id, secret_ref, channel_id):
+    def provision_destination(self, user_id, secret_ref, channel_id, *, actor=None):
         """Called only after the API has verified the owner, guild and channel."""
         with self.store.transaction() as db:
             if not db.execute(
                 "SELECT 1 FROM principals WHERE id=? AND role='user'", (user_id,)
             ).fetchone():
                 raise Error("NOT_FOUND", "User does not exist", 404)
+            before = db.execute(
+                "SELECT channel_id FROM notification_destinations "
+                "WHERE user_id=? AND enabled=1 ORDER BY id DESC LIMIT 1",
+                (user_id,),
+            ).fetchone()
             # Destinations are immutable: existing jobs keep their original route.
             cursor = db.execute(
                 """INSERT INTO notification_destinations(user_id,secret_ref,channel_id,created_at)
-                VALUES(?,?,?,?)""",
+                VALUES(?,?,?,?) RETURNING id""",
                 (user_id, secret_ref, channel_id, self.clock()),
             )
-            return {"id": cursor.lastrowid, "channel_id": channel_id, "configured": True}
+            result = {"id": cursor.fetchone()["id"], "channel_id": channel_id, "configured": True}
+            if actor:
+                from .server_management import audit
+
+                audit(
+                    db,
+                    self,
+                    actor,
+                    "notifications.update",
+                    user_id,
+                    dict(before) if before else {},
+                    {"channel_id": channel_id},
+                )
+            return result
 
     def notification_status(self, user_id):
         with self.store.transaction(write=False) as db:
@@ -410,7 +460,7 @@ class Hub:
                     not local
                     and (
                         node["last_seen"] is None
-                        or node["last_seen"] < self.clock() - self.heartbeat_timeout
+                        or node["last_seen"] <= self.clock() - self.heartbeat_timeout
                     )
                 )
             ):
@@ -446,7 +496,7 @@ class Hub:
                 run = db.execute(
                     "SELECT last_seen FROM local_runs WHERE job_id=?", (job["id"],)
                 ).fetchone()
-                if run and run["last_seen"] < self.clock() - self.heartbeat_timeout:
+                if run and run["last_seen"] <= self.clock() - self.heartbeat_timeout:
                     continue
                 spec = JobSpec.model_validate_json(job["spec"])
                 target = self._candidate(db, job["user_id"], spec, usage)
@@ -523,7 +573,7 @@ class Hub:
                     "UNSATISFIABLE", "No selected environment can fit this resource request", 409
                 )
             # Existing feasible submissions always go first.
-            self._schedule(db)
+            changed = self._schedule(db)
             target = self._candidate(db, user_id, request.spec, self._usage(db))
             if not target and request.mode == "start_if_available":
                 unavailable = True
@@ -549,10 +599,11 @@ class Hub:
                         "INSERT INTO local_runs(job_id,runner_id,last_seen) VALUES(?,?,?)",
                         (job_id, runner.runner_id, self.clock()),
                     )
-                self._schedule(db)
+                changed.update(self._schedule(db))
                 result = self._job_view(
                     db, db.execute("SELECT * FROM jobs WHERE id=?", (job_id,)).fetchone()
                 )
+        self.jobs_changed(changed)
         if unavailable:
             raise Error(
                 "CAPACITY_UNAVAILABLE", "Capacity changed; nothing was queued for this request", 409
@@ -560,37 +611,80 @@ class Hub:
         return result
 
     def _expire(self, db):
-        db.execute(
-            """UPDATE jobs SET state='UNKNOWN',reason='WORKER_OFFLINE'
+        changed = {
+            r[0]
+            for r in db.execute(
+                """UPDATE jobs SET state='UNKNOWN',reason='WORKER_OFFLINE'
             WHERE state IN ('DISPATCHING','RUNNING') AND node_id IN
-            (SELECT id FROM nodes WHERE last_seen IS NULL OR last_seen<?)
-            AND id NOT IN (SELECT job_id FROM local_runs)""",
-            (self.clock() - self.heartbeat_timeout,),
-        )
-        db.execute(
-            """UPDATE jobs SET state='UNKNOWN',reason='RUNNER_OFFLINE'
+            (SELECT id FROM nodes WHERE last_seen IS NULL OR last_seen<=?)
+            AND id NOT IN (SELECT job_id FROM local_runs) RETURNING id""",
+                (self.clock() - self.heartbeat_timeout,),
+            )
+        }
+        changed.update(
+            r[0]
+            for r in db.execute(
+                """UPDATE jobs SET state='UNKNOWN',reason='RUNNER_OFFLINE'
             WHERE state IN ('DISPATCHING','RUNNING') AND id IN
-            (SELECT job_id FROM local_runs WHERE last_seen<?)""",
-            (self.clock() - self.heartbeat_timeout,),
+            (SELECT job_id FROM local_runs WHERE last_seen<=?) RETURNING id""",
+                (self.clock() - self.heartbeat_timeout,),
+            )
         )
+        changed.update(
+            r[0]
+            for r in db.execute(
+                """UPDATE jobs SET reason='RUNNER_OFFLINE'
+                WHERE state='QUEUED' AND COALESCE(reason,'')<>'RUNNER_OFFLINE'
+                AND id IN (SELECT job_id FROM local_runs WHERE last_seen<=?) RETURNING id""",
+                (self.clock() - self.heartbeat_timeout,),
+            )
+        )
+        return changed
+
+    def next_liveness_deadline(self):
+        """Read only timestamps that can still cause a state/reason transition."""
+        with self.store.transaction(write=False) as db:
+            seen = db.execute(
+                """SELECT MIN(last_seen) FROM (
+                    SELECT r.last_seen FROM local_runs r JOIN jobs j ON j.id=r.job_id
+                    WHERE j.state IN ('DISPATCHING','RUNNING')
+                       OR (j.state='QUEUED' AND COALESCE(j.reason,'')<>'RUNNER_OFFLINE')
+                    UNION ALL
+                    SELECT COALESCE(n.last_seen,0) AS last_seen FROM jobs j
+                    JOIN nodes n ON n.id=j.node_id
+                    WHERE j.state IN ('DISPATCHING','RUNNING')
+                    AND NOT EXISTS (SELECT 1 FROM local_runs r WHERE r.job_id=j.id)
+                ) AS live_jobs"""
+            ).fetchone()[0]
+        return None if seen is None else seen + self.heartbeat_timeout
+
+    def expire(self):
+        """Silence changes liveness, never releases reservations or scans for assignments."""
+        with self.store.transaction() as db:
+            changed = self._expire(db)
+        self.jobs_changed(changed)
 
     def _schedule(self, db):
-        self._expire(db)
+        changed = self._expire(db)
         usage = self._usage(db)
         for job in db.execute("SELECT * FROM jobs WHERE state='QUEUED' ORDER BY seq"):
             run = db.execute(
                 "SELECT last_seen FROM local_runs WHERE job_id=?", (job["id"],)
             ).fetchone()
-            if run and run["last_seen"] < self.clock() - self.heartbeat_timeout:
-                db.execute("UPDATE jobs SET reason='RUNNER_OFFLINE' WHERE id=?", (job["id"],))
+            if run and run["last_seen"] <= self.clock() - self.heartbeat_timeout:
+                if job["reason"] != "RUNNER_OFFLINE":
+                    db.execute("UPDATE jobs SET reason='RUNNER_OFFLINE' WHERE id=?", (job["id"],))
+                    changed.add(job["id"])
                 continue
             spec = JobSpec.model_validate_json(job["spec"])
             target = self._candidate(db, job["user_id"], spec, usage)
             if not target:
-                db.execute(
-                    "UPDATE jobs SET reason='WAITING_FOR_RESOURCES_OR_ENVIRONMENT' WHERE id=?",
-                    (job["id"],),
-                )
+                if job["reason"] != "WAITING_FOR_RESOURCES_OR_ENVIRONMENT":
+                    db.execute(
+                        "UPDATE jobs SET reason='WAITING_FOR_RESOURCES_OR_ENVIRONMENT' WHERE id=?",
+                        (job["id"],),
+                    )
+                    changed.add(job["id"])
                 continue
             db.execute(
                 """UPDATE jobs SET state='DISPATCHING',reason=NULL,node_id=?,environment_id=?,
@@ -615,10 +709,13 @@ class Hub:
                 spec.memory_mib,
                 target["gpu_ids"],
             )
+            changed.add(job["id"])
+        return changed
 
     def tick(self):
         with self.store.transaction() as db:
-            self._schedule(db)
+            changed = self._schedule(db)
+        self.jobs_changed(changed)
 
     def _job_view(self, db, row):
         result = dict(row)
@@ -689,23 +786,29 @@ class Hub:
         return result
 
     def cancel(self, user_id, job_id):
+        changed = set()
         with self.store.transaction() as db:
             row = self._owned_job(db, user_id, job_id)
             if row["state"] not in TERMINAL:
-                db.execute("UPDATE jobs SET cancel_requested=1 WHERE id=?", (job_id,))
+                if not row["cancel_requested"]:
+                    db.execute("UPDATE jobs SET cancel_requested=1 WHERE id=?", (job_id,))
+                    changed.add(job_id)
                 if row["state"] == "QUEUED":
                     db.execute(
                         "UPDATE jobs SET state='CANCELLED',finished_at=?,reason=NULL WHERE id=?",
                         (self.clock(), job_id),
                     )
                     self._notify(db, job_id, "finished")
-                self._schedule(db)
-            return self._job_view(
+                changed.update(self._schedule(db))
+            result = self._job_view(
                 db, db.execute("SELECT * FROM jobs WHERE id=?", (job_id,)).fetchone()
             )
+        self.jobs_changed(changed)
+        return result
 
     def event(self, node_id, job_id, event: WorkerEvent, *, user_id=None, runner=None):
         payload_hash = digest(encode({"job_id": job_id, **event.model_dump()}))
+        changed = set()
         with self.store.transaction() as db:
             if runner:
                 owned, run, env = self.local.owned(db, user_id, job_id, runner)
@@ -747,8 +850,10 @@ class Hub:
                         "UPDATE jobs SET started_at=? WHERE id=?", (event.occurred_at, job_id)
                     )
                     self._notify(db, job_id, "started")
-                if row["state"] not in TERMINAL:
+                    changed.add(job_id)
+                if row["state"] not in TERMINAL and row["state"] != "RUNNING":
                     db.execute("UPDATE jobs SET state='RUNNING',reason=NULL WHERE id=?", (job_id,))
+                    changed.add(job_id)
             else:
                 state = {
                     "succeeded": "SUCCEEDED",
@@ -780,10 +885,15 @@ class Hub:
                     )
                     db.execute("DELETE FROM gpu_reservations WHERE job_id=?", (job_id,))
                     self._notify(db, job_id, "finished")
+                    changed.add(job_id)
             db.execute(
                 "INSERT INTO worker_events VALUES(?,?,?)", (node_id, event.event_id, payload_hash)
             )
-            self._schedule(db)
+            if event.kind != "started" and row["state"] not in TERMINAL:
+                changed.update(self._schedule(db))
+            else:
+                changed.update(self._expire(db))
+        self.jobs_changed(changed)
         return {"accepted": True, "duplicate": False}
 
     def _notify(self, db, job_id, kind):
@@ -815,8 +925,8 @@ class Hub:
         ):
             state = "SUPPRESSED"
         db.execute(
-            """INSERT OR IGNORE INTO notifications(job_id,kind,destination_id,payload,state,next_attempt)
-            VALUES(?,?,?,?,?,?)""",
+            """INSERT INTO notifications(job_id,kind,destination_id,payload,state,next_attempt)
+            VALUES(?,?,?,?,?,?) ON CONFLICT(job_id,kind) DO NOTHING""",
             (job_id, kind, row["notification_id"], encode(payload), state, self.clock()),
         )
 

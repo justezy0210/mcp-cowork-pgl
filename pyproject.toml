@@ -12,6 +12,7 @@ dependencies = [
 [project.optional-dependencies]
 mcp = ["mcp>=1.12,<2"]
 web = ["firebase-admin>=7,<8"]
+postgres = ["psycopg[binary]>=3.2,<4"]
 
 [project.scripts]
 cowork-hub = "cowork_hub.cli:main"
@@ -28,9 +29,11 @@ dev = ["pytest>=8,<10", "ruff>=0.11,<1"]
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/cowork_hub"]
+artifacts = ["src/cowork_hub/web/dist/**"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+markers = ["sqlite_only: checks an older SQLite schema upgrade"]
 
 [tool.ruff]
 target-version = "py312"

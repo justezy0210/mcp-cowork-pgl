@@ -8,11 +8,12 @@
     "229",
     "228",
     "226",
-    "224"
+    "224",
+    "227"
   ],
   "notes": [
     "Registration status is updated only after a successful authenticated registration; inventory observations alone do not confirm live registration.",
-    "Resource observations were made inside personal containers. The user approved all observed CPUs and 90 percent of observed total RAM; physical host/Worker verification remains pending.",
+    "Resource observations were made inside personal containers for 224/226/228/229 and on the physical host for 227. The user approved all observed CPUs and 90 percent of observed total RAM; Worker verification remains pending.",
     "Container hostnames are observations, not verified immutable Docker container IDs.",
     "GPU inventory null means unknown, not zero GPUs.",
     "The SSH route for 226 was not provided; observations there came from the current container."
@@ -187,6 +188,62 @@
           "GPU-047581c4-51bf-23c1-66d8-e21c0f065406",
           "GPU-2483d753-b52c-d6c0-f3da-895065980a3e",
           "GPU-6af5c21f-7646-705a-8a28-73b71cf181ba"
+        ]
+      },
+      "registration_status": "node_registered_environment_unverified"
+    },
+    {
+      "id": "227",
+      "host_address": "203.255.11.227",
+      "ssh": {
+        "host": "203.255.11.227",
+        "user": "ezy",
+        "port": 2244
+      },
+      "observation_source": "ssh",
+      "observed": {
+        "container_hostname": "T630-42",
+        "uid": 1101,
+        "gid": 1100,
+        "logical_cpus_visible": 32,
+        "cpu_affinity_count": 32,
+        "memory_total_kib_visible": 1585103444,
+        "in_container": false,
+        "docker_socket_present": true,
+        "gpus_visible": [
+          {
+            "id": "GPU-9ac3803d-ea9c-b095-b543-2394b3381a9a",
+            "model": "NVIDIA GeForce GTX 1080 Ti",
+            "memory_mib": 11264
+          },
+          {
+            "id": "GPU-dd950eb6-169a-b677-1c73-0d58d3bc01a6",
+            "model": "NVIDIA GeForce GTX 1080 Ti",
+            "memory_mib": 11264
+          },
+          {
+            "id": "GPU-0a36e54d-9e93-b4f2-afc6-19def0af98da",
+            "model": "NVIDIA GeForce GTX 1080 Ti",
+            "memory_mib": 11264
+          },
+          {
+            "id": "GPU-17a1b39b-4682-b79e-788a-32c9a046ade2",
+            "model": "NVIDIA GeForce GTX 1080 Ti",
+            "memory_mib": 11264
+          }
+        ],
+        "gpu_inventory_source": "nvidia_smi"
+      },
+      "verified_container_id": null,
+      "host_worker_verified": false,
+      "budget": {
+        "cpus": 32,
+        "memory_mib": 1393157,
+        "gpu_ids": [
+          "GPU-9ac3803d-ea9c-b095-b543-2394b3381a9a",
+          "GPU-dd950eb6-169a-b677-1c73-0d58d3bc01a6",
+          "GPU-0a36e54d-9e93-b4f2-afc6-19def0af98da",
+          "GPU-17a1b39b-4682-b79e-788a-32c9a046ade2"
         ]
       },
       "registration_status": "node_registered_environment_unverified"

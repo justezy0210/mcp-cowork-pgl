@@ -12,9 +12,11 @@ import tempfile
 from pathlib import Path
 
 # This runs inside the existing hub image. The credential travels through a captured pipe;
-# neither this helper's stdout nor its errors contain the value. The DB is opened read-only.
+# neither this helper's stdout nor its errors contain the value. The shared store
+# selects the configured backend; credential validation uses a read transaction.
 READ_USER_TOKEN = r"""
-import hashlib, os, re, sqlite3, sys
+import hashlib, os, re, sys
+from cowork_hub.store import configured_store
 from pathlib import Path
 user = sys.argv[1]
 root = Path(os.getenv('HUB_DATA_DIR', '/data'))
@@ -22,12 +24,11 @@ raw = (root / 'registration-credentials' / ('user-' + user + '.token')).read_byt
 if not re.fullmatch(rb'[A-Za-z0-9_-]{20,4096}\n?', raw):
     raise SystemExit(1)
 token = raw.strip().decode('ascii')
-db = sqlite3.connect((root / 'hub.sqlite3').as_uri() + '?mode=ro', uri=True)
-row = db.execute(
-    "SELECT id FROM principals WHERE id=? AND role='user' AND enabled=1 AND token_hash=?",
-    (user, hashlib.sha256(token.encode()).hexdigest()),
-).fetchone()
-db.close()
+with configured_store(root).transaction(write=False) as db:
+    row = db.execute(
+        "SELECT id FROM principals WHERE id=? AND role='user' AND enabled=1 AND token_hash=?",
+        (user, hashlib.sha256(token.encode()).hexdigest()),
+    ).fetchone()
 if not row:
     raise SystemExit(1)
 sys.stdout.write(token + '\n')

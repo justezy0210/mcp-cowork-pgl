@@ -1,28 +1,70 @@
 """User-owned pull runners. No Docker socket, remote shell, or process control in the hub."""
 
 import json
-import sqlite3
 
 from .models import Error, LocalEnvironment
-from .service import encode, new_id
+from .service import digest, encode, new_id
 
 
 class LocalJobs:
     def __init__(self, hub):
         self.hub = hub
 
+    def _check_registration(self, db, user_id, env):
+        if not db.execute(
+            "SELECT 1 FROM principals WHERE id=? AND role='user' AND enabled=1", (user_id,)
+        ).fetchone():
+            raise Error("FORBIDDEN", "An enabled user account is required", 403)
+        if not self.hub._allowed(db, user_id, env["node_id"]):
+            raise Error("FORBIDDEN_NODE", "This server is not allowed", 403)
+        self.hub._require_identity(db, user_id, env["uid"], env["gid"])
+        node = db.execute("SELECT * FROM nodes WHERE id=?", (env["node_id"],)).fetchone()
+        if not node["enabled"]:
+            raise Error("FORBIDDEN_NODE", "This server is disabled", 403)
+        if (
+            env["cpus"] > node["cpus"]
+            or env["memory_mib"] > node["memory_mib"]
+            or not set(env["gpu_ids"]) <= {g["id"] for g in json.loads(node["gpus"])}
+        ):
+            raise Error("INVALID_CAPACITY", "Environment exceeds the node budget")
+
+    def _activate_pending(self, db, env, actor):
+        from .server_management import audit
+
+        db.execute("UPDATE local_environments SET approved=1 WHERE environment_id=?", (env["id"],))
+        db.execute("UPDATE environments SET status='READY' WHERE id=?", (env["id"],))
+        audit(
+            db,
+            self.hub,
+            actor,
+            "environment.auto_register",
+            env["id"],
+            {"status": env["status"]},
+            {"status": "READY", "node_id": env["node_id"], "user_id": env["user_id"]},
+        )
+
+    def activate_pending(self):
+        """Recheck legacy pending registrations on startup; never revive unavailable environments."""
+        activated, skipped = [], []
+        with self.hub.store.transaction() as db:
+            pending = db.execute(
+                """SELECT e.* FROM environments e JOIN local_environments l
+                ON l.environment_id=e.id WHERE e.status='PENDING_APPROVAL' AND l.approved=0"""
+            ).fetchall()
+            for row in pending:
+                env = {**dict(row), "gpu_ids": json.loads(row["gpu_ids"])}
+                try:
+                    self._check_registration(db, env["user_id"], env)
+                except Error as error:
+                    skipped.append({"id": env["id"], "error": error.code})
+                    continue
+                self._activate_pending(db, env, env["user_id"])
+                activated.append(env["id"])
+        return {"activated": activated, "skipped": skipped}
+
     def register(self, user_id, request: LocalEnvironment):
         with self.hub.store.transaction() as db:
-            if not self.hub._allowed(db, user_id, request.node_id):
-                raise Error("FORBIDDEN_NODE", "This server is not allowed", 403)
-            self.hub._require_identity(db, user_id, request.uid, request.gid)
-            node = db.execute("SELECT * FROM nodes WHERE id=?", (request.node_id,)).fetchone()
-            if (
-                request.cpus > node["cpus"]
-                or request.memory_mib > node["memory_mib"]
-                or not set(request.gpu_ids) <= {g["id"] for g in json.loads(node["gpus"])}
-            ):
-                raise Error("INVALID_CAPACITY", "Environment exceeds the node budget")
+            self._check_registration(db, user_id, request.model_dump())
             previous = db.execute(
                 """SELECT e.*,l.instance_id,l.approved FROM environments e
                 JOIN local_environments l ON l.environment_id=e.id WHERE l.instance_id=?""",
@@ -49,13 +91,16 @@ class LocalJobs:
                     raise Error(
                         "ENVIRONMENT_CONFLICT", "Instance already has different settings", 409
                     )
+                if previous["status"] == "PENDING_APPROVAL" and not previous["approved"]:
+                    self._activate_pending(db, previous, user_id)
+                    return {"id": previous["id"], "approved": True}
                 return {"id": previous["id"], "approved": bool(previous["approved"])}
             env_id = new_id()
             try:
                 db.execute(
                     """INSERT INTO environments(id,user_id,node_id,name,ssh_target,workdir,status,
                     container_id,uid,gid,cpus,memory_mib,gpu_ids,created_at)
-                    VALUES(?,?,?,?,?,?,'PENDING_APPROVAL',?,?,?,?,?,?,?)""",
+                    VALUES(?,?,?,?,?,?,'READY',?,?,?,?,?,?,?)""",
                     (
                         env_id,
                         user_id,
@@ -73,14 +118,14 @@ class LocalJobs:
                     ),
                 )
                 db.execute(
-                    "INSERT INTO local_environments VALUES(?,?,0)", (env_id, request.instance_id)
+                    "INSERT INTO local_environments VALUES(?,?,1)", (env_id, request.instance_id)
                 )
-            except sqlite3.IntegrityError as exc:
+            except self.hub.store.integrity_error as exc:
                 raise Error("ENVIRONMENT_CONFLICT", "Instance is already registered", 409) from exc
-        return {"id": env_id, "approved": False}
+        return {"id": env_id, "approved": True}
 
-    def approve(self, env_id):
-        """Administrator confirms owner and physical node mapping; this is not Docker attestation."""
+    def approve(self, env_id, *, actor=None):
+        """Compatibility endpoint for older administrative clients; registration is automatic."""
         with self.hub.store.transaction() as db:
             env = db.execute(
                 "SELECT e.* FROM environments e JOIN local_environments l ON l.environment_id=e.id WHERE e.id=?",
@@ -88,11 +133,25 @@ class LocalJobs:
             ).fetchone()
             if not env:
                 raise Error("NOT_FOUND", "Local environment does not exist", 404)
-            self.hub._require_identity(db, env["user_id"], env["uid"], env["gid"])
-            if not self.hub._allowed(db, env["user_id"], env["node_id"]):
-                raise Error("FORBIDDEN_NODE", "Server grant is missing", 403)
+            self._check_registration(
+                db, env["user_id"], {**dict(env), "gpu_ids": json.loads(env["gpu_ids"])}
+            )
             db.execute("UPDATE local_environments SET approved=1 WHERE environment_id=?", (env_id,))
             db.execute("UPDATE environments SET status='READY' WHERE id=?", (env_id,))
+            if actor:
+                from .server_management import audit
+
+                audit(
+                    db,
+                    self.hub,
+                    actor,
+                    "environment.approve",
+                    env_id,
+                    {"status": env["status"]},
+                    {"status": "READY", "node_id": env["node_id"], "user_id": env["user_id"]},
+                )
+            changed = self.hub._schedule(db)
+        self.hub.jobs_changed(changed)
         return {"id": env_id, "approved": True}
 
     def validate(self, db, user_id, env_id, identity):
@@ -105,7 +164,7 @@ class LocalJobs:
             raise Error("NOT_FOUND", "Runner environment does not belong to this user", 404)
         if not env["approved"]:
             raise Error(
-                "ENVIRONMENT_NOT_APPROVED", "An administrator must confirm the node mapping", 409
+                "ENVIRONMENT_NOT_APPROVED", "Environment registration checks have not passed", 409
             )
         if (env["uid"], env["gid"]) != (identity.uid, identity.gid):
             raise Error("IDENTITY_MISMATCH", "Runner UID/GID does not match the environment", 409)
@@ -122,18 +181,53 @@ class LocalJobs:
         return job, run, env
 
     def poll(self, user_id, job_id, identity):
+        """Heartbeat and status for old and new runners; routine polls never scan the queue."""
         with self.hub.store.transaction() as db:
-            self.hub._expire(db)
-            self.owned(db, user_id, job_id, identity)
-            db.execute(
-                "UPDATE local_runs SET last_seen=? WHERE job_id=?", (self.hub.clock(), job_id)
+            job, run, _ = self.owned(db, user_id, job_id, identity)
+            now = self.hub.clock()
+            stale = run["last_seen"] <= now - self.hub.heartbeat_timeout
+            changed = self.hub._expire(db) if stale else set()
+            if now - run["last_seen"] >= min(10, self.hub.heartbeat_timeout / 3):
+                db.execute("UPDATE local_runs SET last_seen=? WHERE job_id=?", (now, job_id))
+            # A previously offline queued runner can become eligible again now.
+            if stale and job["state"] == "QUEUED":
+                changed.update(self.hub._schedule(db))
+            result = self.view(db, self.hub._owned_job(db, user_id, job_id))
+        self.hub.jobs_changed(changed)
+        return result
+
+    def read(self, user_id, job_id, identity):
+        with self.hub.store.transaction(write=False) as db:
+            job, _, _ = self.owned(db, user_id, job_id, identity)
+            return self.view(db, job)
+
+    def view(self, db, job):
+        result = self.hub._job_view(db, job)
+        # Heartbeats and notification delivery do not change execution permission.
+        result["revision"] = digest(
+            encode(
+                {
+                    key: result[key]
+                    for key in (
+                        "id",
+                        "state",
+                        "reason",
+                        "execution_id",
+                        "cancel_requested",
+                        "started_at",
+                        "finished_at",
+                        "exit_code",
+                        "environment_id",
+                        "gpu_ids",
+                    )
+                }
             )
-            self.hub._schedule(db)
-            return self.hub._job_view(db, self.hub._owned_job(db, user_id, job_id))
+        )
+        return result
 
     def claim(self, user_id, job_id, identity):
         with self.hub.store.transaction() as db:
-            self.hub._expire(db)
+            changed = self.hub._expire(db)
             job, run, env = self.owned(db, user_id, job_id, identity)
             if not identity.claim_id:
                 raise Error("INVALID_REQUEST", "A unique claim attempt ID is required")
@@ -147,12 +241,14 @@ class LocalJobs:
                 "UPDATE local_runs SET claimed=1,last_seen=?,claim_id=? WHERE job_id=?",
                 (self.hub.clock(), identity.claim_id, job_id),
             )
-            return {
+            result = {
                 "granted": True,
                 "job_id": job_id,
                 "execution_id": job["execution_id"],
                 "gpu_ids": json.loads(job["gpu_ids"]),
             }
+        self.hub.jobs_changed(changed)
+        return result
 
     def event(self, user_id, job_id, request):
         # Ownership is checked inside the same transaction as the transition.
@@ -161,9 +257,9 @@ class LocalJobs:
     def is_online(self, db, node_id, user_id):
         return bool(
             db.execute(
-                """SELECT 1 FROM local_runs r JOIN jobs j ON j.id=r.job_id
-            JOIN environments e ON e.id=json_extract(j.spec,'$.environment_ids[0]')
-            WHERE e.node_id=? AND j.user_id=? AND r.last_seen>=?
+                f"""SELECT 1 FROM local_runs r JOIN jobs j ON j.id=r.job_id
+            JOIN environments e ON e.id={self.hub.store.first_environment_sql}
+            WHERE e.node_id=? AND j.user_id=? AND r.last_seen>?
             AND j.state IN ('QUEUED','DISPATCHING','RUNNING','UNKNOWN') LIMIT 1""",
                 (node_id, user_id, self.hub.clock() - self.hub.heartbeat_timeout),
             ).fetchone()

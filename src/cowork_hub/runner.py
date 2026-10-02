@@ -7,6 +7,7 @@ import fcntl
 import hashlib
 import json
 import os
+import random
 import re
 import signal
 import stat
@@ -14,6 +15,7 @@ import subprocess
 import sys
 import time
 import uuid
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from urllib.parse import urlsplit
 
@@ -86,9 +88,10 @@ class Client:
             follow_redirects=False,
         )
 
-    def request(self, method, path, body=None):
+    def request(self, method, path, body=None, *, timeout=None):
         try:
-            r = self.http.request(method, path, json=body)
+            options = {} if timeout is None else {"timeout": timeout}
+            r = self.http.request(method, path, json=body, **options)
         except httpx.HTTPError:
             raise Retryable("HUB_UNREACHABLE") from None
         if r.status_code >= 500 or r.status_code == 429:
@@ -286,6 +289,21 @@ def descendants_finished():
             return False
 
 
+class Backoff:
+    def __init__(self):
+        self.failures = 0
+        self.until = 0.0
+
+    def failed(self):
+        self.failures += 1
+        ceiling = min(10, 2 ** min(self.failures - 1, 4))
+        self.until = time.monotonic() + random.uniform(ceiling / 2, ceiling)
+
+    def reset(self):
+        self.failures = 0
+        self.until = 0.0
+
+
 def supervise(record):
     record = Path(record)
     lock = open(record.with_suffix(".lock"), "a")
@@ -296,17 +314,37 @@ def supervise(record):
         lock.close()
         return 125
     state = json.loads(read_private(record))
+    saved = None
+
+    def persist():
+        nonlocal saved
+        snapshot = json.dumps(state, sort_keys=True)
+        if snapshot != saved:
+            save(record, state)
+            saved = snapshot
+
     state["supervisor_pid"] = os.getpid()
-    save(record, state)
+    persist()
     config = load_config(state["config"])
     runner = identity(config, state["runner_id"])
     runner["claim_id"] = state.get("claim_id")
     client = Client(config)
+    watch_client = Client(config)
+    pool = ThreadPoolExecutor(max_workers=2, thread_name_prefix="hub-io")
     proc = None
     cancelled_at = None
     interrupted = False
+    cancel_sent = False
     leader_code = None
     last_poll = 0.0
+    capabilities = None
+    watch = None
+    revision = None
+    pending_job = None
+    status_epoch = 0
+    watch_epoch = 0
+    control_retry = Backoff()
+    watch_retry = Backoff()
 
     def interrupt(_sig, _frame):
         nonlocal interrupted
@@ -330,53 +368,137 @@ def supervise(record):
                 "log_path": state["log_path"],
             }
         )
-        save(record, state)
+        persist()
+
+    def monitor_process():
+        nonlocal proc, cancelled_at, leader_code
+        if proc is None:
+            return
+        if interrupted and cancelled_at is None:
+            cancelled_at = time.monotonic()
+        if cancelled_at is not None:
+            terminate_tree(
+                signal.SIGKILL if time.monotonic() - cancelled_at > 3 else signal.SIGTERM
+            )
+        if leader_code is None:
+            leader_code = proc.poll()
+        if leader_code is not None and descendants_finished():
+            state.update(
+                phase="REPORTING",
+                exit_code=130 if cancelled_at is not None else leader_code,
+            )
+            event(
+                "cancelled"
+                if cancelled_at is not None
+                else ("succeeded" if leader_code == 0 else "failed"),
+                leader_code,
+            )
+            proc = None
+            # Try a newly completed outcome promptly, even after an earlier status error.
+            control_retry.until = 0.0
+
+    def observe(job, *, current=True):
+        nonlocal pending_job, revision, cancelled_at
+        # Cancellation is monotonic, even if a concurrent heartbeat overtook this reply.
+        if job["cancel_requested"] and cancelled_at is None:
+            cancelled_at = time.monotonic()
+        if not current or state["phase"] not in ("WAITING", "CLAIMING", "RUNNING"):
+            return
+        execution_id = state.get("execution_id")
+        if execution_id and job["execution_id"] != execution_id:
+            # A delayed QUEUED response must never erase an assigned/claimed execution.
+            return
+        pending_job = job
+        revision = job.get("revision")
+        state["hub_state"] = job["state"]
+        state["execution_id"] = job["execution_id"]
+        persist()
+
+    def collect_watch():
+        nonlocal watch
+        if watch is None or not watch.done():
+            return
+        completed, watch = watch, None
+        try:
+            observe(completed.result(), current=watch_epoch == status_epoch)
+            watch_retry.reset()
+        except RunnerError as exc:
+            state["error"] = str(exc)
+            persist()
+            watch_retry.failed()
+
+    def request(method, path, body=None):
+        nonlocal status_epoch
+        # All network I/O runs outside the process-monitoring loop, including heartbeats.
+        future = pool.submit(client.request, method, path, body)
+        while not future.done():
+            collect_watch()
+            monitor_process()
+            time.sleep(0.05)
+        collect_watch()
+        monitor_process()
+        result = future.result()
+        if method == "POST":
+            status_epoch += 1
+        return result
 
     try:
         if state["phase"] in ("CLAIMING", "RUNNING", "RECOVERY_REQUIRED"):
-            # A crash between spawn and journal write cannot be distinguished from a live child.
             state["phase"] = "RECOVERY_REQUIRED"
             state["error"] = (
                 "Execution state uncertain; reconcile processes before releasing the reservation"
             )
-            save(record, state)
+            persist()
             return 125
         if state["phase"] in ("DONE", "ERROR"):
             return state.get("exit_code", 125)
         while True:
+            collect_watch()
+            monitor_process()
+            if time.monotonic() < control_retry.until:
+                time.sleep(0.05)
+                continue
             try:
                 if not state["job_id"]:
-                    job = client.request("POST", "/v1/local/jobs", state["request"])
+                    job = request("POST", "/v1/local/jobs", state["request"])
                     state["job_id"] = job["id"]
-                    save(record, state)
+                    persist()
                 prefix = "/v1/local/jobs/" + state["job_id"]
+                if interrupted and not cancel_sent:
+                    request("POST", "/v1/jobs/" + state["job_id"] + "/cancel")
+                    cancel_sent = True
+                    last_poll = 0.0
                 while state["events"]:
-                    client.request(
+                    request(
                         "POST", prefix + "/events", {"runner": runner, "event": state["events"][0]}
                     )
                     state["events"].pop(0)
-                    save(record, state)
+                    persist()
                 if state["phase"] == "REPORTING":
                     state["phase"] = "DONE"
-                    save(record, state)
+                    persist()
                     return state["exit_code"]
-                if time.monotonic() - last_poll >= 1:
-                    job = client.request("POST", prefix + "/poll", runner)
+                if capabilities is None:
+                    capabilities = request("GET", "/v1/capabilities")
+                long_wait = capabilities.get("local_job_wait") == 1
+                heartbeat = (
+                    float(capabilities.get("local_heartbeat_seconds", 10)) if long_wait else 1
+                )
+                if time.monotonic() - last_poll >= heartbeat:
+                    observe(request("POST", prefix + "/poll", runner))
                     last_poll = time.monotonic()
-                    state["hub_state"] = job["state"]
-                    state["execution_id"] = job["execution_id"]
-                    save(record, state)
-                    if interrupted:
-                        job = client.request("POST", "/v1/jobs/" + job["id"] + "/cancel")
-                    if job["cancel_requested"] and cancelled_at is None:
-                        cancelled_at = time.monotonic()
+                if interrupted and not cancel_sent:
+                    observe(request("POST", "/v1/jobs/" + state["job_id"] + "/cancel"))
+                    cancel_sent = True
+                job, pending_job = pending_job, None
+                if job is not None and state["phase"] != "REPORTING":
                     if state["phase"] == "WAITING":
                         if job["state"] in ("SUCCEEDED", "FAILED", "CANCELLED"):
                             state.update(
                                 phase="DONE",
                                 exit_code=job["exit_code"] if job["exit_code"] is not None else 130,
                             )
-                            save(record, state)
+                            persist()
                             return state["exit_code"]
                         if cancelled_at is not None and job["execution_id"]:
                             state.update(phase="REPORTING", exit_code=130)
@@ -385,11 +507,11 @@ def supervise(record):
                             state["phase"] = "CLAIMING"
                             state["claim_id"] = uuid.uuid4().hex
                             runner["claim_id"] = state["claim_id"]
-                            save(record, state)
+                            persist()
                             try:
-                                grant = client.request("POST", prefix + "/claim", runner)
+                                grant = request("POST", prefix + "/claim", runner)
                             except RunnerError:
-                                # No command was spawned in this process. Persist a tombstone before reporting.
+                                # Never repeat an uncertain claim or start a command after a lost reply.
                                 state.update(phase="REPORTING", exit_code=125)
                                 event("not_started")
                                 continue
@@ -397,9 +519,15 @@ def supervise(record):
                                 not grant.get("granted")
                                 or grant["execution_id"] != job["execution_id"]
                             ):
-                                raise RunnerError("Unexpected execution permission")
+                                state.update(phase="REPORTING", exit_code=125)
+                                event("not_started")
+                                continue
+                            if interrupted or cancelled_at is not None:
+                                state.update(phase="REPORTING", exit_code=130)
+                                event("not_started")
+                                continue
                             state["phase"] = "RUNNING"
-                            save(record, state)
+                            persist()
                             env = dict(os.environ)
                             env["CUDA_VISIBLE_DEVICES"] = ",".join(grant["gpu_ids"])
                             spec = state["request"]["spec"]
@@ -418,50 +546,45 @@ def supervise(record):
                             state["pid"] = proc.pid
                             event("started")
                         elif job["state"] == "UNKNOWN":
-                            # This supervisor has not attempted a claim or spawned a child.
                             state.update(phase="REPORTING", exit_code=125)
                             event("not_started")
                     elif state["phase"] == "RUNNING" and job["state"] == "UNKNOWN":
-                        event(
-                            "started"
-                        )  # Reconcile the same observed process, never launch another.
-            except Retryable as exc:
-                state["error"] = str(exc)
-                save(record, state)
+                        event("started")  # Reconcile this same observed process, never relaunch.
+                if (
+                    long_wait
+                    and watch is None
+                    and time.monotonic() >= watch_retry.until
+                    and state["phase"] in ("WAITING", "RUNNING")
+                ):
+                    query = "?wait_seconds=20" + ("&since=" + revision if revision else "")
+                    watch_epoch = status_epoch
+                    watch = pool.submit(
+                        watch_client.request,
+                        "POST",
+                        prefix + "/wait" + query,
+                        dict(runner),
+                        timeout=25,
+                    )
+                control_retry.reset()
             except RunnerError as exc:
                 state["error"] = str(exc)
-                if str(exc).startswith("INVALID_CLAIM") and proc is None:
-                    state["phase"] = "RECOVERY_REQUIRED"
-                    save(record, state)
-                    return 125
-                if state["phase"] == "WAITING" and state["job_id"] is None:
-                    state["phase"] = "ERROR"
-                    save(record, state)
-                    return 125
-                save(record, state)
-            if proc is not None:
-                if interrupted and cancelled_at is None:
-                    cancelled_at = time.monotonic()
-                if cancelled_at is not None:
-                    terminate_tree(
-                        signal.SIGKILL if time.monotonic() - cancelled_at > 3 else signal.SIGTERM
-                    )
-                if leader_code is None:
-                    leader_code = proc.poll()
-                if leader_code is not None and descendants_finished():
-                    state.update(
-                        phase="REPORTING",
-                        exit_code=130 if cancelled_at is not None else leader_code,
-                    )
-                    event(
-                        "cancelled"
-                        if cancelled_at is not None
-                        else ("succeeded" if leader_code == 0 else "failed"),
-                        leader_code,
-                    )
-                    proc = None
-            time.sleep(0.1)
+                if not isinstance(exc, Retryable):
+                    if str(exc).startswith("INVALID_CLAIM") and proc is None:
+                        state["phase"] = "RECOVERY_REQUIRED"
+                        persist()
+                        return 125
+                    if state["phase"] == "WAITING" and state["job_id"] is None:
+                        state["phase"] = "ERROR"
+                        persist()
+                        return 125
+                persist()
+                control_retry.failed()
+            time.sleep(0.05)
     finally:
+        # A terminal event normally wakes the wait immediately; network failures are bounded
+        # by its 25-second timeout. DONE is already durable before this cleanup.
+        pool.shutdown(wait=True, cancel_futures=True)
+        watch_client.close()
         client.close()
         lock.close()
 

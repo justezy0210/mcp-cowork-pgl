@@ -74,8 +74,7 @@ def test_connector_reuses_registration_after_lost_ack_and_restart(
     env_id = requests[0]["environment_id"]
     assert env_id in json.loads(read_private(runner))["ssh_runners"]
     assert (
-        next(e for e in hub.list_environments("tester") if e["id"] == env_id)["status"]
-        == "PENDING_APPROVAL"
+        next(e for e in hub.list_environments("tester") if e["id"] == env_id)["status"] == "READY"
     )
     assert hub.list_jobs("tester") == []
 
@@ -102,7 +101,7 @@ def test_new_main_configuration_with_token_registers_without_approving(runtime, 
     env = next(
         e for e in hub.list_environments("tester") if e["id"] == configured["environment_id"]
     )
-    assert env["status"] == "PENDING_APPROVAL" and env["ssh_target"] == "local"
+    assert env["status"] == "READY" and env["ssh_target"] == "local"
     assert path.parent.stat().st_mode & 0o077 == 0
     assert run(path, once=True)["idle"]
 
@@ -208,6 +207,8 @@ def test_release_excludes_local_credentials_and_installer_preserves_existing_dir
     with tarfile.open(archive) as package:
         names = package.getnames()
         assert any(n.endswith("scripts/install_connector.py") for n in names)
+        for asset in ("index.html", "preview.js", "preview.css"):
+            assert any(n.endswith("src/cowork_hub/web/preview/" + asset) for n in names)
         assert all(
             "/.local/" not in n and not n.endswith(".token") and "/.env" not in n for n in names
         )

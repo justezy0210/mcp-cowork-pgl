@@ -12,7 +12,7 @@ from cowork_hub.models import (
     UserIdentity,
 )
 from cowork_hub.service import Hub
-from cowork_hub.store import Store
+from cowork_hub.store import SCHEMA_VERSION, Store
 
 
 def pending_environment(hub, user="alice"):
@@ -99,6 +99,7 @@ def test_identity_update_preserves_verified_environments_and_active_jobs(rig):
     assert rig.hub.cluster("alice")[0]["reserved_cpus"] == 8
 
 
+@pytest.mark.sqlite_only
 def test_v1_migration_preserves_credentials_jobs_and_blocks_unconfigured_dispatch(rig):
     first = rig.submit()
     queued = rig.submit()
@@ -112,7 +113,7 @@ def test_v1_migration_preserves_credentials_jobs_and_blocks_unconfigured_dispatc
     assert migrated.get_job("alice", queued["id"])["state"] == "QUEUED"
     assert migrated.user_identity("alice") == {"configured": False}
     with migrated.store.transaction(write=False) as db:
-        assert db.execute("PRAGMA user_version").fetchone()[0] == 4
+        assert db.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION
     rig.hub = migrated
     rig.event(first)
     assert rig.state(queued) == "QUEUED"

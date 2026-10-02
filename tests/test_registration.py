@@ -46,6 +46,7 @@ def test_registers_approved_nodes_with_private_credentials_and_no_execution(mani
         "228": 1,
         "226": 0,
         "224": 4,
+        "227": 4,
     }
     for node in manifest["nodes"]:
         with hub.store.transaction(write=False) as db:
@@ -58,7 +59,7 @@ def test_registers_approved_nodes_with_private_credentials_and_no_execution(mani
     with hub.store.transaction(write=False) as db:
         assert db.execute("SELECT COUNT(*) FROM environments").fetchone()[0] == 0
         assert db.execute("SELECT COUNT(*) FROM jobs").fetchone()[0] == 0
-    assert {n["id"] for n in hub.cluster("ezy")} == {"229", "228", "226", "224"}
+    assert {n["id"] for n in hub.cluster("ezy")} == {"229", "228", "226", "224", "227"}
     for item in result["credentials"]:
         path = Path(item["path"])
         token = path.read_text().strip()

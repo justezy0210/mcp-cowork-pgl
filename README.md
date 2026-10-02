@@ -9,8 +9,19 @@
 처음 사용하는 구성원은 [신규 사용자 매뉴얼](docs/first-user-guide.md)의 계정 준비·설치·등록·첫 실행 순서를 따른다.
 소스와 설치 프로그램은 [GitHub 저장소](https://github.com/justezy0210/mcp-cowork-pgl)에서 제공한다.
 
+2026-09-28: Google 로그인 기반 [서버 관리 웹](docs/server-platform.md)을 운영 허브에 적용했다.
+허용 서버 현황, 최초 계정 승인, SSH 연결·자동 등록, 사용자 권한, 예약 예산·배정 중지와 변경 이력을 관리한다.
+2026-09-29: [Firebase Hosting 웹](https://mcp-cowork-pgl.web.app)을 공개했다. 초기 웹 관리자는 `ezy`다.
+[Cloud Functions·전용 SSH 중계](docs/firebase-hosting.md)를 사용하므로 브라우저 PC의 SSH 터널은 필요 없다.
+
+웹 화면은 **React·TypeScript·Vite·Tailwind CSS·shadcn/ui**로 구성한다.
+개발 소스는 `frontend/`, 빌드 결과는 `src/cowork_hub/web/dist/`에 둔다.
+로컬 실행, 빌드, 브라우저 검증은 [프런트엔드 개발 안내](frontend/README.md)를 참고한다.
+Docker는 프런트엔드를 함께 빌드하며, Python 패키지·Hosting·설치 프로그램을 직접 만들 때는
+`npm --prefix frontend ci`와 `npm --prefix frontend run build`를 먼저 실행한다.
+
 현재는 **허브와 모의 Worker 검증, 네 서버와 사용자 `ezy`의 접근 권한 등록까지 완료**했다.
-Docker 배포와 허브 정상 응답을 확인했고, stdio MCP와 현재 컨테이너의 Codex 등록을 추가했다.
+Docker 배포와 허브 정상 응답을 확인했고, stdio MCP와 현재 컨테이너의 Codex·Claude Code 등록을 추가했다.
 개인 토큰으로 실제 `ezy` 권한의 서버·환경·작업·알림 설정 조회까지 확인했다. 사용자 측 `cowork-run`과 본인 작업용 허가·보고 API를 구현하고 임시 허브에서 실제 프로세스로 검증했다.
 운영 허브 업데이트와 226 환경 승인을 완료했다. 실제 작업 두 건의 대기·자동 실행 전환·종료와
 Discord 시작·종료 알림 4건의 전송을 확인했다. [226 운영 검증 기록](docs/verification-226.md)을 참고한다.
@@ -20,23 +31,30 @@ MCP에 로컬 작업 제출·취소와 자원 부족 시 대기·준비된 축�
 실행은 같은 실행기가 담당한다. 229의 SSH 환경 등록·관리자 승인과 실제 원격 실행 검증을 완료했다.
 RTX 3090 장치 선택·CUDA 메모리 접근, GPU 대기·자동 전환, 연결 종료 후 실행 유지와 Discord 전송을 확인했다.
 [229 운영 검증 기록](docs/verification-229.md)과 [SSH 실행 안내](docs/ssh-runner.md)를 참고한다.
-[cowork-jobs 스킬](skills/cowork-jobs/SKILL.md)을 현재 사용자 Codex에 설치해 계산 작업에서 자동 선택하도록 설정했다.
+[cowork-jobs 스킬](skills/cowork-jobs/SKILL.md)을 현재 사용자 Codex와 Claude Code에 설치했다.
+Codex는 계산 작업에서 자동 선택하도록 설정했다. Claude Code는 스킬 발견을 확인했으며 자연어 자동 선택은 아직 확인하지 않았다.
 [MCP 안내](docs/mcp-setup.md)를 참고한다. 224·228도 SSH 등록·메인 MCP 연결·관리자 승인을 완료했다.
 새 MCP 연결에서 두 서버의 GPU 예약 사전검토를 확인했으며 실제 계산은 아직 제출하지 않았다.
-실제 연구 작업 검증, 다른 사용자/클라이언트 설정·웹 플랫폼은 다음 단계다.
+실제 연구 작업 검증과 다른 사용자/클라이언트 설정은 다음 단계다.
 
-웹 등록 요청을 처리할 `cowork-connector`, 사용자별 추가 토큰 발급·폐기 API와 관리자 승인 대기 목록을
+웹 등록 요청을 처리할 `cowork-connector`, 사용자별 추가 토큰 발급·폐기 API를
 구현했다. [연결 프로그램 설치 안내](docs/connector-setup.md)에 설치·실행·허브 업데이트 절차를 정리했다.
 2026-09-21 운영 허브 업데이트와 226 연결 프로그램 시작을 완료했고, 실제 229 SSH 등록 요청의 자동 처리를 확인했다.
 Google 로그인 후 본인 토큰 발급·다운로드·목록·폐기 화면을 추가했다. [웹 토큰 설정](docs/web-tokens.md)을 따른다.
-Firebase·HTTPS 운영 연결, 나머지 관리 화면, 버전별 GitHub Release 게시와 컨테이너 재시작 시 연결 프로그램 자동 실행 설정은 남아 있다.
+Google 로그인·서버 관리 운영 적용을 완료했다. 공개 HTTPS·Firebase Hosting 연결,
+버전별 GitHub Release 게시와 컨테이너 재시작 시 연결 프로그램 자동 실행 설정은 남아 있다.
+
+PostgreSQL 저장 계층과 기존 SQLite 데이터의 검증·이전 도구를 추가했다.
+2026-09-21 운영 허브의 PostgreSQL 전환 후 상태와 기존 토큰의 MCP 조회를 확인했다.
+네 서버의 접근 권한·READY 환경 4개·작업 기록 41개·Discord 목적지 설정이 조회되며,
+226 연결 프로그램도 온라인이다. [PostgreSQL 운영·전환 안내](docs/postgresql.md)를 참고한다.
 
 ```mermaid
 flowchart LR
-    B[웹 브라우저 / 향후 현황·관리 화면] --> A[허브 API · 인증]
+    B[웹 브라우저 / 서버 현황·관리 화면] --> A[허브 API · 인증]
     U[사용자 에이전트 / 검토·제출·취소 MCP] --> A
     T[수동 사용자 / cowork-run] --> A
-    A --> D[(로컬 SQLite)]
+    A --> D[(PostgreSQL)]
     S[예약 · 대기열 처리] <--> D
     W[개인 컨테이너의 실행 스크립트] -->|배정 조회 · 실제 시작/종료 보고| A
     U -->|로컬 실행기 시작| W
@@ -53,7 +71,7 @@ flowchart LR
 
 - 관리자·사용자·서버 Worker별 Bearer 인증과 사용자별 허용 서버 정책.
 - 사용자가 SSH 접속 경로로 환경 등록 요청. 해당 서버 Worker의 검증 전에는 실행 불가.
-- CPU 정수 단위, 메모리 MiB, 물리 GPU ID를 하나의 SQLite 트랜잭션에서 예약.
+- CPU 정수 단위, 메모리 MiB, 물리 GPU ID를 하나의 DB 트랜잭션에서 예약.
 - GPU 한 장에 작업 하나. 모델·최소 VRAM 조건을 선택적으로 지정. 컨테이너가 달라도 같은 GPU ID를 중복 배정하지 않음.
 - 접수 순서 중 실행 가능한 작업부터 배정. 후보 환경 순서대로 처음 들어맞는 서버 선택.
 - `plan`은 상태를 변경하지 않으며, 축소 실행안의 **실제 argv**를 별도로 검토.
@@ -91,9 +109,22 @@ flowchart LR
 
 ## 웹 플랫폼 계획
 
+통합 포털의 중앙 DB는 **PostgreSQL**로 확정했다. Firebase는 웹 호스팅·Google 로그인에 사용하고,
+실제 raw 파일은 NFS에 보관한다. PostgreSQL 지원과 이전 도구를 구현했고 운영 허브 전환 후 조회 검증을 완료했다.
+[전환 안내](docs/postgresql.md)와 [도입 계획](plans/container-job-orchestration.md#postgresql-도입과-허브-전환)을 따른다.
+
+같은 웹을 종자·샘플·데이터·재고를 확인하는 연구실 포털로 확장할 예정이다.
+재고에는 종자·샘플뿐 아니라 시약·소모품도 포함한다. 이 영역들은 아직 구현하지 않았으며,
+세부 항목·변경 기능·권한·데이터 파일 보관 방식은 후속 설계에서 정한다.
+[연구실 포털 확장 계획](plans/container-job-orchestration.md#연구실-포털-확장)에 확정 범위와 미정 사항을 기록했다.
+raw 데이터의 다운로드·이름 변경·위치 이동은 에이전트의 전용 도구와 수동 CLI를 통해 수행할 때
+현재 위치와 변경 이력을 기록하도록 계획했다. 일반 파일 명령의 자동 감시는 첫 범위에 포함하지 않는다.
+[데이터 위치 추적 계획](plans/container-job-orchestration.md#raw-데이터-위치와-변경-이력)은 아직 미구현이다.
+
 허브 현황 조회와 SSH 접속 환경 등록·사용자별 서버 이용 제한 등 설정 관리를 웹에서 수행하도록 계획에 포함했다. 웹·MCP·`cowork-run`은
 같은 허브 API와 예약 기록을 사용한다. Google 로그인과 본인 MCP 토큰 발급·다운로드·목록·폐기 화면을 구현했다.
-관리자가 허용한 Firebase 계정만 기존 허브 사용자로 연결한다. 운영 Firebase·HTTPS 연결과 나머지 관리 화면은 남아 있다.
+관리자가 허용한 Firebase 계정만 기존 허브 사용자로 연결한다. 운영 Firebase·HTTPS 중계는 적용했고,
+현재 제공하는 관리 화면의 범위는 [서버 관리 웹](docs/server-platform.md)에 정리했다.
 발급·보관·개별 폐기 기준은 [개인 MCP 토큰 관리 계획](plans/container-job-orchestration.md#개인-mcp-토큰-관리)을 따른다.
 
 첫 웹 화면은 서버별 예산·예약량·예약 가능량과 GPU 예약, Worker 연결 상태, 대기열,
@@ -259,6 +290,19 @@ python3 scripts/register_cluster.py --apply
 
 ## Discord 설정
 
+관리자는 하나의 연구실 Discord 서버에 사용자별 비공개 채널을 만들고 해당 사용자에게 보기 권한을 준다.
+새 사용자는 Google 로그인 후 계정 이름·UID·GID·본인 채널 웹훅을 필수 등록한다.
+관리자는 계정 승인 시 허용 서버를 선택하며 알림 채널도 함께 연결된다. 별도의 서버 사용 신청은 없다.
+이후 채널 변경은 **관리자 → 사용자별 서버 권한·Discord 채널**에서 처리한다.
+일반 사용자는 **Discord 알림**에서 본인의 연결 상태만 확인한다. 다른 사용자에게 연결된 채널은 거절한다.
+웹훅은 데이터 볼륨의 `discord-users.json`에 권한 `0600`으로 저장하고 응답에는 채널 ID만 노출한다.
+`HUB_DISCORD_GUILD_ID`가 필요하다. 다른 Discord 서버도 허용하려면 `HUB_DISCORD_ADDITIONAL_GUILD_IDS`에
+서버 ID를 쉼표로 구분해 추가한다. 기존 서버 ID를 유지하므로 이전 작업의 채널도 계속 검증된다.
+허용 목록 밖의 서버는 `DESTINATION_GUILD_NOT_ALLOWED`로 거절하며 웹훅 형식 오류와 구분한다.
+새 작업부터 변경한 채널을 사용하며 기존 작업의 경로는 유지한다.
+채널 미설정 시 작업 제출을 거절하고 공용 채널로 대신 보내지 않는다.
+
+관리자가 비밀 파일로 미리 등록하는 기존 방식도 지원한다.
 연구실 Discord 서버에 사용자별 채널과 Webhook을 준비한다. 보호된 파일에 아래 구조로 저장하고
 허브 실행 계정만 읽도록 권한을 `0600`으로 설정한다. 실제 Webhook은 저장소·DB·MCP 인자에 넣지 않는다.
 

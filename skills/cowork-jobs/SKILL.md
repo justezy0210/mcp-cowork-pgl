@@ -1,6 +1,6 @@
 ---
 name: cowork-jobs
-description: Reserve lab server resources through cowork MCP before launching analysis, training, mapping, assembly, simulations, or other CPU/memory/GPU batch jobs locally or over SSH from the main container. Use automatically for these lab workloads even without mentioning cowork or MCP. Also use for SSH environment registration, job status and cancellation. Exclude code-only edits, explanations, file inspection, and short lightweight checks or tests.
+description: Reserve lab server resources through cowork MCP before launching analysis, training, mapping, assembly, simulations, or other CPU/memory/GPU batch jobs locally or over SSH from the main container. Use automatically for these lab workloads even without mentioning cowork or MCP. Also use for SSH environment registration and Cowork job status and cancellation. Exclude code-only edits, explanations, file inspection, and short lightweight checks or tests.
 ---
 
 # Cowork 계산 작업
@@ -18,9 +18,10 @@ MCP 이름을 말하지 않은 “이 데이터 분석해줘”, “학습 돌�
 - 사용자가 새 SSH 환경 등록을 요청하면 `register_ssh_environment(target={host,user,port,node_id,workdir})`을 사용한다.
   메인 컨테이너의 기존 SSH 인증으로 공유 코드·Python·개인 토큰 경로를 사용해 원격 실행기를 준비한다.
   대상에는 에이전트나 MCP 서버를 설치하지 않는다. 등록은 서버 사용 권한을 늘리지 않으며,
-  `requires_approval`이면 기존 관리자 절차로 물리 서버 대응을 승인해야 한다. 승인 대기를 실행 가능으로 표시하지 않는다.
+  계정 승인 시 정한 허용 서버·UID/GID·자원 검사를 통과하면 추가 승인 없이 자동 등록된다.
+  `requires_approval: true`가 남아 있으면 이전 허브 버전 또는 등록 조건 오류를 확인한다. `READY`가 아닌 환경을 실행 가능으로 표시하지 않는다.
 - `submit_job`이 없고 조회 도구만 있으면 이전 MCP 연결일 수 있다. 연결 갱신이 필요하다고 안내한다.
-  도구·인증·환경 승인·Discord 설정 오류가 있으면 원인을 알리고 계산 제출을 보류한다.
+  도구·인증·환경 등록·Discord 설정 오류가 있으면 원인을 알리고 계산 제출을 보류한다.
   실패한 작업을 일반 셸 명령으로 실행하여 예약 절차를 우회하지 않는다.
 - 실제 `argv`, 작업명, CPU 수, 메모리 MiB, GPU 개수, 절대 경로 `workdir`을 준비한다.
   사용자 요청·이미 합의한 설정·프로젝트 실행 프로필을 우선한다. 자원량이 불명확하면 필요한 값만 묻는다.

@@ -36,7 +36,8 @@ from .models import (
     UserIdentity,
     WorkerEvent,
 )
-from .notifications import Destinations, Notifier
+from .notifications import Destinations, EnrollmentNotifier, Notifier
+from .scheduling import RECONCILE_SECONDS, run_scheduler
 from .service import Hub, new_id
 
 logger = logging.getLogger(__name__)
@@ -84,7 +85,12 @@ def create_app(
 ):
     changed = asyncio.Event()
     revision = new_id()
+    job_waiters = {}
+    deadline_changed = asyncio.Event()
     notifier = Notifier(hub, destinations) if destinations else None
+    enrollment_notifier = (
+        EnrollmentNotifier(hub, destinations, web_config) if destinations and web_config else None
+    )
 
     def wake():
         nonlocal changed, revision
@@ -92,19 +98,17 @@ def create_app(
         old, changed = changed, asyncio.Event()
         old.set()
 
-    async def scheduling_loop():
-        while True:
-            try:
-                await asyncio.to_thread(hub.tick)
-                wake()
-            except Exception:
-                logger.error("Scheduler tick failed; will retry")
-            await asyncio.sleep(1)
+    def publish(job_ids):
+        wake()
+        deadline_changed.set()
+        for job_id in job_ids:
+            for event in job_waiters.get(job_id, ()):
+                event.set()
 
-    async def notification_loop():
+    async def notification_loop(sender):
         while True:
             try:
-                sent = await asyncio.to_thread(notifier.step)
+                sent = await asyncio.to_thread(sender.step)
             except Exception:
                 logger.error("Notification delivery failed; will retry")
                 sent = False
@@ -112,12 +116,29 @@ def create_app(
 
     @asynccontextmanager
     async def lifespan(app):
+        registration = await asyncio.to_thread(hub.local.activate_pending)
+        if registration["activated"] or registration["skipped"]:
+            logger.info(
+                "Legacy registrations: %d activated, %d require corrections",
+                len(registration["activated"]),
+                len(registration["skipped"]),
+            )
+        loop = asyncio.get_running_loop()
+
+        def notify(job_ids):
+            with contextlib.suppress(RuntimeError):
+                loop.call_soon_threadsafe(publish, job_ids)
+
+        hub.on_jobs_changed = notify
         tasks = []
         if background:
-            tasks.append(asyncio.create_task(scheduling_loop()))
+            tasks.append(asyncio.create_task(run_scheduler(hub, deadline_changed)))
             if notifier:
-                tasks.append(asyncio.create_task(notification_loop()))
+                tasks.append(asyncio.create_task(notification_loop(notifier)))
+            if enrollment_notifier:
+                tasks.append(asyncio.create_task(notification_loop(enrollment_notifier)))
         yield
+        hub.on_jobs_changed = None
         for task in tasks:
             task.cancel()
         for task in tasks:
@@ -130,7 +151,7 @@ def create_app(
     app.add_middleware(BodyLimit)
     from .web_api import mount_web
 
-    mount_web(app, hub, web_config, web_verify)
+    mount_web(app, hub, web_config, web_verify, destinations=destinations)
 
     @app.exception_handler(Error)
     async def hub_error(request: Request, exc: Error):
@@ -167,20 +188,25 @@ def create_app(
     admin, user, worker = role("admin"), role("user"), role("worker")
 
     async def mutate(call, *args):
-        try:
-            return await asyncio.to_thread(call, *args)
-        finally:
-            wake()
+        return await asyncio.to_thread(call, *args)
 
     @app.get("/healthz")
     def health():
         with hub.store.transaction(write=False) as db:
             db.execute("SELECT 1")
-        return {"status": "ok"}
+        return {"status": "ok", "database": hub.store.backend}
 
     @app.get("/v1/capabilities")
     def capabilities():
-        return {"local_runner": 1, "connector": 1, "personal_tokens": 1}
+        return {
+            "local_runner": 1,
+            "connector": 1,
+            "personal_tokens": 1,
+            "local_job_wait": 1,
+            "local_heartbeat_seconds": min(10, hub.heartbeat_timeout / 3),
+            "event_scheduler": 1,
+            "scheduler_reconcile_seconds": RECONCILE_SECONDS,
+        }
 
     @app.post("/v1/tokens", status_code=201)
     def issue_token(body: TokenCreate, principal=Depends(user)):
@@ -269,6 +295,33 @@ def create_app(
     async def local_poll(job_id: str, body: RunnerIdentity, principal=Depends(user)):
         # Poll refreshes only this job's liveness. Another runner cannot hide its failure.
         return await mutate(hub.local.poll, principal["id"], job_id, body)
+
+    @app.post("/v1/local/jobs/{job_id}/wait")
+    async def local_wait(
+        job_id: str,
+        body: RunnerIdentity,
+        since: str | None = Query(None, max_length=80),
+        wait_seconds: float = Query(20, ge=0, le=20),
+        principal=Depends(user),
+    ):
+        event = asyncio.Event()
+        # Subscribe before reading: a commit between the read and wait cannot be lost.
+        job_waiters.setdefault(job_id, set()).add(event)
+        deadline = asyncio.get_running_loop().time() + wait_seconds
+        try:
+            while True:
+                event.clear()
+                result = await asyncio.to_thread(hub.local.read, principal["id"], job_id, body)
+                remaining = deadline - asyncio.get_running_loop().time()
+                if result["revision"] != since or remaining <= 0:
+                    return result
+                # No DB connection or write lock is held while awaiting a notification.
+                with contextlib.suppress(TimeoutError):
+                    await asyncio.wait_for(event.wait(), remaining)
+        finally:
+            job_waiters[job_id].discard(event)
+            if not job_waiters[job_id]:
+                del job_waiters[job_id]
 
     @app.post("/v1/local/jobs/{job_id}/claim")
     async def local_claim(job_id: str, body: RunnerIdentity, principal=Depends(user)):

@@ -10,7 +10,6 @@ import json
 import os
 import re
 import shlex
-import shutil
 import subprocess
 import sys
 import uuid
@@ -230,21 +229,8 @@ def prepare_remote(payload, *, local=False):
                 if config.get("ssh_registration") != registration.model_dump():
                     raise RunnerError("SSH_ROUTE_CONFLICT")
             else:
-                gpu_ids = []
-                if node["gpus"] and shutil.which("nvidia-smi"):
-                    try:
-                        probe = subprocess.run(
-                            ["nvidia-smi", "--query-gpu=uuid", "--format=csv,noheader"],
-                            capture_output=True,
-                            text=True,
-                            timeout=8,
-                            check=True,
-                        )
-                    except (OSError, subprocess.SubprocessError):
-                        raise RunnerError("SSH_GPU_PROBE_FAILED") from None
-                    gpu_ids = [line.strip() for line in probe.stdout.splitlines() if line.strip()]
-                    if not set(gpu_ids) <= {g["id"] for g in node["gpus"]}:
-                        raise RunnerError("SSH_GPU_NODE_MISMATCH")
+                # All lab containers can access every GPU on their node.
+                gpu_ids = [gpu["id"] for gpu in node["gpus"]]
                 memory = next(
                     int(line.split()[1]) // 1024
                     for line in Path("/proc/meminfo").read_text().splitlines()

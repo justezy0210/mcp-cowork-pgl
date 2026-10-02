@@ -23,6 +23,7 @@ def build(source, output):
             "README.md",
             "Dockerfile",
             "compose.yaml",
+            "compose.postgres.yaml",
             ".dockerignore",
             "config/web.example.json",
         )
@@ -31,9 +32,18 @@ def build(source, output):
     selected += sorted((source / "docs").glob("*.md"))
     selected += sorted((source / "plans").glob("*.md"))
     selected += sorted((source / "src/cowork_hub").glob("*.py"))
-    selected += sorted((source / "src/cowork_hub/web").glob("*"))
+    selected += sorted(
+        path for path in (source / "src/cowork_hub/web").rglob("*") if path.is_file()
+    )
     selected += sorted((source / "skills/cowork-jobs").rglob("*.md"))
     selected += sorted((source / "skills/cowork-jobs").rglob("*.yaml"))
+    frontend = source / "frontend"
+    selected += [frontend / name for name in (
+        "package.json", "package-lock.json", "tsconfig.json", "vite.config.ts",
+        "components.json", "index.html",
+    )]
+    for directory in ("src", "public"):
+        selected += sorted(path for path in (frontend / directory).rglob("*") if path.is_file())
     for path in selected:
         if path.is_symlink() or not path.is_file():
             raise ValueError("Release input is missing or a symlink: " + str(path))

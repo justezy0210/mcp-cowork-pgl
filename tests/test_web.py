@@ -119,10 +119,14 @@ def test_rejects_inappropriate_identity_claims(rig, changes):
 def test_disabled_web_static_files_and_no_private_config_exposure(rig):
     with TestClient(create_app(rig.hub, background=False)) as client:
         page = client.get("/")
-        assert page.status_code == 200 and "개인 토큰" in page.text
+        assert page.status_code == 200 and 'id="root"' in page.text
         assert "frame-ancestors 'none'" in page.headers["content-security-policy"]
         assert page.headers["cache-control"] == "no-store"
-        assert client.get("/web/app.js").status_code == 200
+        import re
+
+        asset = re.search(r'src="\./(assets/[^\"]+\.js)"', page.text).group(1)
+        assert client.get("/web/" + asset).status_code == 200
+        assert client.get("/web/app.js").status_code == 404
         assert client.get("/web/config.json").json() == {"enabled": False}
         assert (
             client.post("/v1/web/tokens", json={"name": "x"}, headers=auth(rig.alice)).status_code
@@ -217,9 +221,13 @@ def test_hosting_export_excludes_account_mapping_and_preserves_existing_output(t
     config.write_text(settings(api_base_url="https://hub.example.org").model_dump_json())
     output = tmp_path / "hosting"
     assert module.build(config, output)["published"] is False
+    assert list((output / "assets").glob("*.js"))
+    assert list((output / "assets").glob("*.css"))
+    assert not (output / "app.js").exists()
     public = json.loads((output / "config.json").read_text())
     assert public["enabled"] and "users" not in public
-    assert "google-alice" not in "".join(p.read_text() for p in output.iterdir())
+    assert b"google-alice" not in b"".join(p.read_bytes() for p in output.rglob("*") if p.is_file())
+    assert (output / "downloads/cowork-setup.pyz").is_file()
     hosting = json.loads((output / "firebase.json").read_text())["hosting"]
     assert hosting["public"] == "."
     assert any(

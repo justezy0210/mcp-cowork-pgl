@@ -114,7 +114,7 @@ def test_registration_claims_restart_and_approval_are_separate(rig):
     assert service.list_connectors("alice")[0]["online"]
     rig.now += 121
     assert not service.list_connectors("alice")[0]["online"]
-    restarted = Hub(Store(rig.hub.store.path), clock=lambda: rig.now).management
+    restarted = Hub(rig.reopen_store(), clock=lambda: rig.now).management
     second = restarted.poll("alice", registered["id"], poll)["request"]
     assert second["id"] == first["id"] and second["claim_id"] != first["claim_id"]
     env_id = registered_environment(rig, body)
@@ -128,10 +128,10 @@ def test_registration_claims_restart_and_approval_are_separate(rig):
     assert completed["state"] == "REGISTERED"
     assert restarted.complete("alice", registered["id"], queued["id"], outcome) == completed
     pending = restarted.pending_environments()
-    assert pending[0]["id"] == env_id and pending[0]["user_id"] == "alice"
+    assert pending == []
     assert (
         next(e for e in rig.hub.list_environments("alice") if e["id"] == env_id)["status"]
-        == "PENDING_APPROVAL"
+        == "READY"
     )
     with TestClient(create_app(rig.hub, background=False)) as client:
         url = "/v1/admin/local/environments/" + env_id + "/approve"
@@ -207,6 +207,7 @@ def test_registration_result_cannot_bind_another_environment(rig):
     assert service.list_requests("alice")[0]["state"] == "RUNNING"
 
 
+@pytest.mark.sqlite_only
 def test_schema_three_upgrade_preserves_credentials_and_reservations(rig):
     job = rig.submit(cpus=2)
     with rig.hub.store.transaction() as db:

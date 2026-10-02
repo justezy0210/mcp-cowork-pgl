@@ -197,20 +197,28 @@ def run(path, *, once=False):
             fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError:
             raise RunnerError("CONNECTOR_ALREADY_RUNNING") from None
-        client = Client(load_config(config["runner_config"]))
-        try:
-            require_capability(client)
-        finally:
-            client.close()
         if once:
+            client = Client(load_config(config["runner_config"]))
+            try:
+                require_capability(client)
+            finally:
+                client.close()
             return step(path)
         save(path.with_suffix(".process.json"), process_identity(os.getpid()))
         stop = threading.Event()
         for sig in (signal.SIGTERM, signal.SIGINT):
             signal.signal(sig, lambda *_: stop.set())
         delay = 5
+        verified = False
         while not stop.is_set():
             try:
+                if not verified:
+                    client = Client(load_config(config["runner_config"]))
+                    try:
+                        require_capability(client)
+                    finally:
+                        client.close()
+                    verified = True
                 step(path)
                 delay = 5
             except (RunnerError, OSError, ValueError, KeyError):
