@@ -5,7 +5,7 @@ import os
 import sqlite3
 from pathlib import Path
 
-SCHEMA_VERSION = 7
+SCHEMA_VERSION = 8
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS principals (
@@ -130,7 +130,22 @@ CREATE TABLE IF NOT EXISTS enrollment_notifications (
   next_attempt REAL NOT NULL, lease_until REAL, message_id TEXT, error_code TEXT,
   UNIQUE(enrollment_id, user_id)
 );
-PRAGMA user_version = 7;
+CREATE TABLE IF NOT EXISTS catalog_state (
+  id INTEGER PRIMARY KEY CHECK(id=1), revision TEXT NOT NULL,
+  payload TEXT NOT NULL, updated_at REAL NOT NULL
+);
+CREATE TABLE IF NOT EXISTS catalog_requests (
+  user_id TEXT NOT NULL REFERENCES principals(id), request_key TEXT NOT NULL,
+  request_hash TEXT NOT NULL, result TEXT NOT NULL, created_at REAL NOT NULL,
+  PRIMARY KEY(user_id, request_key)
+);
+CREATE TABLE IF NOT EXISTS catalog_events (
+  id TEXT PRIMARY KEY, file_id TEXT NOT NULL, actor TEXT NOT NULL REFERENCES principals(id),
+  action TEXT NOT NULL, before_value TEXT NOT NULL, after_value TEXT NOT NULL,
+  request_key TEXT NOT NULL, created_at REAL NOT NULL
+);
+CREATE INDEX IF NOT EXISTS catalog_events_file ON catalog_events(file_id,created_at);
+PRAGMA user_version = 8;
 """
 
 

@@ -207,8 +207,11 @@ def test_release_excludes_local_credentials_and_installer_preserves_existing_dir
     with tarfile.open(archive) as package:
         names = package.getnames()
         assert any(n.endswith("scripts/install_connector.py") for n in names)
-        for asset in ("index.html", "preview.js", "preview.css"):
-            assert any(n.endswith("src/cowork_hub/web/preview/" + asset) for n in names)
+        for asset in ("index.html", "favicon.svg"):
+            assert any(n.endswith("src/cowork_hub/web/dist/" + asset) for n in names)
+        assert any("/web/dist/assets/" in n and n.endswith(".js") for n in names)
+        assert any("/web/dist/assets/" in n and n.endswith(".css") for n in names)
+        assert all("/web/" not in n or "/web/dist/" in n for n in names)
         assert all(
             "/.local/" not in n and not n.endswith(".token") and "/.env" not in n for n in names
         )

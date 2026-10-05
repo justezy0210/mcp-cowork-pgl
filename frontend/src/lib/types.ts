@@ -1,5 +1,5 @@
 export type Profile = {
-  user_id: string; is_admin: boolean; allowed_nodes: string[]
+  user_id: string; is_admin: boolean; can_view_catalog?: boolean; allowed_nodes: string[]
   identity: { configured: boolean; uid?: number; gid?: number }
   notification: NotificationStatus
 }

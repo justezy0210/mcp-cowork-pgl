@@ -1,0 +1,12 @@
+interface:
+  display_name: "Cowork data library"
+  short_description: "FASTQ를 옮기면 Cowork 목록의 경로도 함께 갱신합니다"
+  default_prompt: "$cowork-data-library로 FASTQ를 이동하고 데이터 목록의 경로도 함께 갱신해줘."
+policy:
+  allow_implicit_invocation: true
+dependencies:
+  tools:
+    - type: "mcp"
+      value: "cowork"
+      description: "FASTQ catalog registration, automatic path updates after agent moves, and change history"
+      transport: "stdio"

@@ -22,6 +22,12 @@ TOOLS = {
     "submit_job",
     "cancel_job",
     "register_ssh_environment",
+    "catalog_overview",
+    "catalog_files",
+    "catalog_file",
+    "catalog_history",
+    "catalog_register_files",
+    "catalog_relocate_files",
 }
 
 

@@ -149,9 +149,11 @@ def create_app(
 
     app = FastAPI(title="cowork-hub", version="0.1.0", lifespan=lifespan)
     app.add_middleware(BodyLimit)
+    from .catalog_store import CatalogStore
     from .web_api import mount_web
 
-    mount_web(app, hub, web_config, web_verify, destinations=destinations)
+    catalog = CatalogStore(hub, web_config)
+    mount_web(app, hub, web_config, web_verify, destinations=destinations, catalog=catalog)
 
     @app.exception_handler(Error)
     async def hub_error(request: Request, exc: Error):
@@ -186,6 +188,9 @@ def create_app(
         return dependency
 
     admin, user, worker = role("admin"), role("user"), role("worker")
+    from .catalog_api import mount_catalog_api
+
+    mount_catalog_api(app, catalog, web_config, user)
 
     async def mutate(call, *args):
         return await asyncio.to_thread(call, *args)
@@ -206,6 +211,7 @@ def create_app(
             "local_heartbeat_seconds": min(10, hub.heartbeat_timeout / 3),
             "event_scheduler": 1,
             "scheduler_reconcile_seconds": RECONCILE_SECONDS,
+            "catalog_metadata": 1,
         }
 
     @app.post("/v1/tokens", status_code=201)

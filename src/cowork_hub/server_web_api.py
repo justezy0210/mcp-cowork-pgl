@@ -39,7 +39,10 @@ def mount_servers(app, hub, config, user, *, destinations=None, onboarding=None)
 
     @app.get("/v1/web/profile")
     def profile(principal=Depends(user)):
-        return portal.profile(principal["user_id"], is_admin(principal))
+        from .catalog import can_view_catalog
+
+        return {**portal.profile(principal["user_id"], is_admin(principal)),
+                "can_view_catalog": can_view_catalog(config, principal)}
 
     @app.get("/v1/web/admin/enrollments")
     def enrollments(page: Page = 1, page_size: Size = 20, principal=Depends(admin)):

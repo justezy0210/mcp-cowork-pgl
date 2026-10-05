@@ -62,6 +62,9 @@ def test_setup_registers_checks_and_resumes_without_jobs_or_extra_approval(
     current = json.loads(config_path.read_text())
     setup = module("setup_client")
     monkeypatch.syspath_prepend(str(ROOT / "scripts"))
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setattr(setup.Path, "home", lambda: home)
     import install_connector
 
     # Reuse the test interpreter instead of downloading dependencies; actual connector and stdio MCP run.
@@ -121,6 +124,10 @@ def test_setup_registers_checks_and_resumes_without_jobs_or_extra_approval(
         update = Namespace(
             root=args.root, update=True, token_file=None, wheelhouse=None, no_autostart=True
         )
+        # Simulate a client installed before the data-library skill was introduced.
+        skills = home / ".codex/skills"
+        skills.mkdir(parents=True)
+        (skills / "cowork-jobs").symlink_to(args.root / "source/skills/cowork-jobs", target_is_directory=True)
         setup.update_settings(update, ROOT)
         assert update.hub_url == current["hub_url"] and update.node == "A"
         with monkeypatch.context() as updating:
@@ -137,6 +144,9 @@ def test_setup_registers_checks_and_resumes_without_jobs_or_extra_approval(
             updated = setup.setup(update, ROOT)
         assert updated["environment_id"] == first["environment_id"]
         assert updated["mcp"] == "preserved"
+        assert updated["catalog_skills"] == {"codex": "installed"}
+        assert (home / ".agents/skills/cowork-data-library").resolve() == args.root / "source/skills/cowork-data-library"
+        assert (skills / "cowork-jobs").resolve() == args.root / "source/skills/cowork-jobs"
         assert config.read_bytes() == old_config
         assert (args.root / "state/runner.json").read_bytes() == old_runner
         assert (args.root / "state/user.token").read_bytes() == old_token
@@ -305,14 +315,18 @@ def test_client_registration_uses_argument_arrays_and_preserves_existing(
     skill = root / "source/skills/cowork-jobs"
     skill.mkdir(parents=True)
     (skill / "SKILL.md").write_bytes((ROOT / "skills/cowork-jobs/SKILL.md").read_bytes())
+    catalog_skill = root / "source/skills/cowork-data-library"
+    catalog_skill.mkdir()
+    (catalog_skill / "SKILL.md").write_bytes((ROOT / "skills/cowork-data-library/SKILL.md").read_bytes())
     result = setup.connect_client(root / "bin", root, "http://hub:8080", client)
-    assert result == {"mcp": "installed", "skill": "installed"}
+    assert result == {"mcp": "installed", "skill": "installed", "catalog_skill": "installed"}
     add = next(c for c in calls if "add" in c)
     assert str(root / "bin/cowork-mcp") in add
     assert str(root / "state/user.token") in add
     assert ("-s" in add) == (client == "claude")
     destination = home / (".agents" if client == "codex" else ".claude") / "skills/cowork-jobs"
     assert destination.resolve() == skill
+    assert (destination.parent / "cowork-data-library").resolve() == catalog_skill
     calls.clear()
     monkeypatch.setattr(
         setup.subprocess,
@@ -322,8 +336,30 @@ def test_client_registration_uses_argument_arrays_and_preserves_existing(
     assert setup.connect_client(root / "other-bin", root, "http://hub:8080", client) == {
         "mcp": "existing",
         "skill": "existing",
+        "catalog_skill": "existing",
     }
     assert destination.resolve() == skill
+
+
+@pytest.mark.parametrize("base,client", [(".agents", "codex"), (".codex", "codex"), (".claude", "claude")])
+def test_update_adds_skill_to_existing_clients_without_cli_or_overwrite(tmp_path, monkeypatch, base, client):
+    setup = module("setup_client")
+    monkeypatch.setattr(setup.Path, "home", lambda: tmp_path)
+    monkeypatch.setattr(setup.shutil, "which", lambda *a: pytest.fail("No client CLI needed"))
+    monkeypatch.setattr(setup.subprocess, "run", lambda *a, **kw: pytest.fail("Do not change MCP registrations"))
+    assert setup.update_client_skills(ROOT) == {}
+    skills = tmp_path / base / "skills"
+    skills.mkdir(parents=True)
+    (skills / "cowork-jobs").symlink_to(ROOT / "skills/cowork-jobs", target_is_directory=True)
+    assert setup.update_client_skills(ROOT) == {client: "installed"}
+    target = tmp_path / (".agents" if client == "codex" else ".claude") / "skills/cowork-data-library"
+    assert target.resolve() == ROOT / "skills/cowork-data-library"
+    assert setup.update_client_skills(ROOT) == {client: "existing"}
+    target.unlink()
+    target.mkdir()
+    (target / "SKILL.md").write_text("User-maintained data catalog skill")
+    assert setup.update_client_skills(ROOT) == {client: "existing"}
+    assert (target / "SKILL.md").read_text() == "User-maintained data catalog skill"
 
 
 @pytest.mark.parametrize(

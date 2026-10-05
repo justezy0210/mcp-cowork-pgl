@@ -1,6 +1,6 @@
 import { t, useLanguage, setLanguage, type Language } from "@/lib/i18n"
 import { useEffect, useRef, useState } from "react"
-import { Bell, BookOpen, Boxes, KeyRound, ListTodo, LogOut, Menu, Server, ShieldCheck } from "lucide-react"
+import { Bell, BookOpen, Boxes, Database, KeyRound, ListTodo, LogOut, Menu, Server, ShieldCheck, Workflow } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { NativeSelect } from "@/components/ui/native-select"
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from "@/components/ui/sheet"
@@ -15,6 +15,8 @@ import { TokensPage } from "@/pages/tokens"
 import { GuidePage } from "@/pages/guide"
 import { AdminPage } from "@/pages/admin"
 import { NotificationsPage } from "@/pages/notifications"
+import { HowItWorksPage } from "@/pages/how-it-works"
+import { DataPage } from "@/pages/data"
 import type { Profile, IssuedToken } from "@/lib/types"
 
 const navigation = [
@@ -24,9 +26,17 @@ const navigation = [
   { id: "tokens", label: "개인 토큰", icon: KeyRound, description: "메인 연결 프로그램에서 사용할 토큰을 관리하세요." },
   { id: "notifications", label: "Discord 알림", icon: Bell, description: "내 작업의 알림을 받는 채널을 확인하세요." },
   { id: "guide", label: "메인 프로그램 설치", icon: BookOpen, description: "평소 에이전트를 실행하는 메인 컨테이너에 한 번 설치하세요." },
+  { id: "how-it-works", label: "Cowork 작동 원리", icon: Workflow, description: "AI에게 작업을 요청한 뒤 서버에서 실행되고 알림을 받기까지의 흐름입니다." },
   { id: "admin", label: "관리자", icon: ShieldCheck, description: "계정을 승인하고 사용자 권한을 관리하세요." },
 ]
-function Brand() { return <a href="#servers" className="flex shrink-0 items-center gap-2.5 font-semibold tracking-tight"><span className="grid size-8 place-items-center rounded-lg bg-primary text-xl text-white">c</span><span className="text-xl">cowork</span><span className="ml-1 hidden border-l sm:inline pl-3 text-[10px] tracking-widest text-muted-foreground">PGL</span></a> }
+function Brand() { return <a href="#servers" className="flex shrink-0 items-center gap-2.5 font-semibold tracking-tight"><img src="./favicon.svg?v=workflow-3d755d" alt="" aria-hidden="true" width={32} height={32} className="size-8 shrink-0" /><span className="text-xl">cowork</span><span className="ml-1 hidden border-l sm:inline pl-3 text-[10px] tracking-widest text-muted-foreground">PGL</span></a> }
+function WorkspaceNavigation() {
+  const hash = useHash(), data = hash === "data" || hash.startsWith("data/")
+  return <nav aria-label={t("주요 메뉴")} className="order-3 flex w-full min-w-0 items-stretch gap-2 rounded-lg bg-muted p-1 xl:order-none xl:w-auto xl:shrink-0">
+    <Button asChild variant={data ? "ghost" : "default"} className="flex-1 gap-2 px-3 xl:flex-none"><a href="#servers" aria-current={data ? undefined : "true"}><Server className="size-4" aria-hidden="true" />{t("서버 관리")}</a></Button>
+    <Button asChild variant={data ? "default" : "ghost"} className="flex-1 gap-2 px-3 xl:flex-none"><a href="#data" aria-current={data ? "true" : undefined}><Database className="size-4" aria-hidden="true" />{t("데이터 관리")}</a></Button>
+  </nav>
+}
 function Portal({ profile }: { profile: Profile }) {
   const hash = useHash(), [mobile, setMobile] = useState(false)
   const [token, setToken] = useState<IssuedToken | null>(null)
@@ -40,13 +50,15 @@ function Portal({ profile }: { profile: Profile }) {
   const auth = useSession()
   useEffect(() => { setMobile(false); heading.current?.focus({ preventScroll: true }); if (previousHash.current !== hash) { previousHash.current = hash; void session.refreshProfile() } }, [hash])
   useEffect(() => {
+    if (hash === "data" || hash.startsWith("data/")) return
     if (!["servers", "jobs", "environments"].includes(active)) return
     const refresh = () => { if (!document.hidden) void session.refreshProfile() }
     const timer = window.setInterval(refresh, 20000)
     document.addEventListener("visibilitychange", refresh)
     return () => { clearInterval(timer); document.removeEventListener("visibilitychange", refresh) }
-  }, [active])
+  }, [active, hash])
   const nav = <nav aria-label={t("서버 관리 메뉴")} className="space-y-1.5">{available.map(item => <a key={item.id} href={"#" + item.id} aria-current={active === item.id ? "page" : undefined} onClick={() => setMobile(false)} className={cn("flex min-h-11 items-center gap-3 rounded-lg px-3 py-3 text-sm text-muted-foreground transition-colors hover:bg-accent hover:text-foreground", active === item.id && "bg-accent font-semibold text-primary")}><item.icon className="size-4" />{t(item.label)}</a>)}</nav>
+  if (hash === "data" || hash.startsWith("data/")) return <DataPage allowed={profile.can_view_catalog ?? profile.is_admin} />
   return <div id="portal" className="mx-auto grid max-w-[1540px] gap-6 px-4 py-6 md:grid-cols-[210px_minmax(0,1fr)] md:px-8 md:py-8 lg:gap-9">
     <aside className="sticky top-24 hidden self-start md:block"><p className="mb-5 px-3 text-[10px] font-semibold tracking-[.2em] text-muted-foreground">WORKSPACE</p>{nav}<p className="mt-8 px-3 text-xs text-muted-foreground">{t("계산은 MCP·CLI에서 제출하고 현황과 권한은 이곳에서 관리합니다.")}</p></aside>
     <main className="min-w-0"><div className="mb-7 flex items-start gap-3">
@@ -59,16 +71,17 @@ function Portal({ profile }: { profile: Profile }) {
       : active === "environments" ? <EnvironmentsPage profile={profile} />
       : active === "tokens" ? <TokensPage profile={profile} pendingToken={token} onToken={setToken} />
       : active === "notifications" ? <NotificationsPage />
-      : active === "guide" ? <GuidePage profile={profile} pendingToken={token} onToken={setToken} /> : <AdminPage />}
+      : active === "guide" ? <GuidePage profile={profile} pendingToken={token} onToken={setToken} />
+      : active === "how-it-works" ? <HowItWorksPage /> : <AdminPage />}
     <footer className="mt-10 border-t pt-5 text-xs leading-6 text-muted-foreground">{t("사용 가능한 서버와 컨테이너는 관리자가 승인한 본인 권한을 따릅니다.")}</footer>
     </main>
   </div>
 }
 export default function App() {
-  const auth = useSession(), language = useLanguage()
-  useEffect(() => { document.documentElement.lang = language; document.title = t("서버 관리 · Cowork") }, [language])
+  const auth = useSession(), language = useLanguage(), hash = useHash()
+  useEffect(() => { document.documentElement.lang = language; document.title = hash === "how-it-works" ? t("Cowork 작동 원리") : hash === "data" || hash.startsWith("data/") ? t("데이터 관리 · Cowork") : t("서버 관리 · Cowork") }, [language, hash])
   useEffect(() => { void session.start() }, [])
-  return <><a href="#content" className="sr-only focus:not-sr-only focus:fixed focus:z-50 focus:bg-background focus:p-3">{t("본문으로 이동")}</a><header className="border-b bg-card"><div className="mx-auto flex min-h-18 max-w-[1540px] flex-wrap items-center justify-between gap-x-3 gap-y-1 px-4 py-3 sm:flex-nowrap md:px-8"><Brand />
+  return <><a href="#content" className="sr-only focus:not-sr-only focus:fixed focus:z-50 focus:bg-background focus:p-3">{t("본문으로 이동")}</a><header className="border-b bg-card"><div className="mx-auto flex min-h-18 max-w-[1540px] flex-wrap items-center justify-between gap-x-3 gap-y-3 px-4 py-3 md:px-8"><Brand /><WorkspaceNavigation />
       {auth.user && <span id="account-name" className="order-2 w-full min-w-0 text-right text-xs leading-5 text-muted-foreground [overflow-wrap:anywhere] sm:order-none sm:w-auto sm:flex-1">{auth.profile?.user_id || auth.user.email}</span>}
       <div className="ml-auto flex shrink-0 items-center gap-2">
         {auth.user && <Button id="logout" variant="ghost" onClick={session.logout} aria-label={t("로그아웃")}><LogOut className="size-4" /><span className="max-sm:hidden">{t("로그아웃")}</span></Button>}
@@ -76,7 +89,8 @@ export default function App() {
       </div>
     </div></header>
     <div id="content">{auth.status === "ready" && auth.profile ? <Portal key={auth.epoch} profile={auth.profile} />
+      : hash === "how-it-works" ? <main className="mx-auto max-w-[1320px] px-4 py-8 md:px-8"><div className="mb-7"><h1 className="text-2xl font-semibold tracking-tight">{t("Cowork 작동 원리")}</h1><p className="mt-2 text-sm text-muted-foreground">{t("AI에게 작업을 요청한 뒤 서버에서 실행되고 알림을 받기까지의 흐름입니다.")}</p></div><HowItWorksPage /><div className="action-row mt-8"><Button asChild><a href="#servers">{t("로그인·계정 등록")}</a></Button></div></main>
       : auth.status === "onboarding" ? <OnboardingPage key={auth.epoch} />
-      : <main className="mx-auto max-w-lg px-4 py-16"><Panel title={auth.user ? t("로그인되었습니다") : t("본인 계정으로 시작하기")} description={t("Google로 로그인한 뒤 본인 계정으로 서버와 작업을 관리하세요.")}><div className="space-y-5"><Notice error>{auth.message}</Notice>{["loading", "checking"].includes(auth.status) ? <><Loading /><p className="text-sm text-muted-foreground">{auth.status === "checking" ? t("계정과 서버 권한을 확인하고 있습니다.") : t("로그인을 준비하고 있습니다.")}</p></> : <><Button id="login" onClick={session.login} disabled={auth.busy || auth.status === "disabled"} className="w-full">{auth.busy ? t("로그인 중…") : auth.status === "disabled" ? t("로그인 준비 필요") : auth.user ? t("연결 다시 확인") : t("Google로 로그인")}</Button><p className="text-xs text-muted-foreground">{t("새 계정은 관리자 승인 후 이용할 수 있습니다.")}</p></>}</div></Panel></main>}</div>
+      : <main className="mx-auto max-w-lg px-4 py-16"><Panel title={auth.user ? t("로그인되었습니다") : t("본인 계정으로 시작하기")} description={t("Google로 로그인한 뒤 본인 계정으로 서버와 작업을 관리하세요.")}><div className="space-y-5"><Notice error>{auth.message}</Notice>{["loading", "checking"].includes(auth.status) ? <><Loading /><p className="text-sm text-muted-foreground">{auth.status === "checking" ? t("계정과 서버 권한을 확인하고 있습니다.") : t("로그인을 준비하고 있습니다.")}</p></> : <><Button id="login" onClick={session.login} disabled={auth.busy || auth.status === "disabled"} className="w-full">{auth.busy ? t("로그인 중…") : auth.status === "disabled" ? t("로그인 준비 필요") : auth.user ? t("연결 다시 확인") : t("Google로 로그인")}</Button><p className="text-xs text-muted-foreground">{t("새 계정은 관리자 승인 후 이용할 수 있습니다.")}</p></>}<Button asChild variant="outline" className="w-full"><a href="#how-it-works"><Workflow className="size-4" />{t("Cowork 작동 원리")}</a></Button></div></Panel></main>}</div>
   </>
 }

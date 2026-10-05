@@ -31,7 +31,7 @@ def security_headers(config=None):
     }
 
 
-def mount_web(app, hub, config=None, verify=None, *, destinations=None):
+def mount_web(app, hub, config=None, verify=None, *, destinations=None, catalog=None):
     identity = WebIdentity(hub, config, verify)
     bearer = HTTPBearer(auto_error=False)
 
@@ -63,7 +63,7 @@ def mount_web(app, hub, config=None, verify=None, *, destinations=None):
     @app.middleware("http")
     async def web_headers(request, call_next):
         response = await call_next(request)
-        if request.url.path.startswith(("/web", "/v1/web")):
+        if request.url.path.startswith(("/web", "/v1/web", "/v1/catalog")):
             response.headers.update(security_headers(config))
         return response
 
@@ -102,6 +102,9 @@ def mount_web(app, hub, config=None, verify=None, *, destinations=None):
     from .server_web_api import mount_servers
 
     mount_servers(app, hub, config, user, destinations=destinations, onboarding=onboarding)
+    from .catalog import mount_catalog
+
+    mount_catalog(app, config, user, catalog=catalog)
     app.mount(
         "/web",
         StaticFiles(directory=Path(__file__).parent / "web/dist", html=True, check_dir=False),

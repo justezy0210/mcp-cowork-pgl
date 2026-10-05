@@ -5,6 +5,7 @@ import os
 import re
 import threading
 from pathlib import Path
+from typing import Literal
 from urllib.parse import urlsplit
 
 from pydantic import Field, field_validator
@@ -42,6 +43,9 @@ class WebConfig(Input):
     admin_users: list[Identifier] = Field(default_factory=list, max_length=32)
     allowed_origins: list[str] = Field(default_factory=list, max_length=16)
     api_base_url: str = Field(default="", max_length=2048)
+    catalog_path: str | None = Field(default=None, max_length=4096)
+    catalog_access: Literal["admin", "approved"] = "admin"
+    catalog_write_access: Literal["admin", "approved"] = "admin"
 
     @field_validator("users")
     @classmethod

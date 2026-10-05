@@ -228,11 +228,18 @@ def test_hosting_export_excludes_account_mapping_and_preserves_existing_output(t
     assert public["enabled"] and "users" not in public
     assert b"google-alice" not in b"".join(p.read_bytes() for p in output.rglob("*") if p.is_file())
     assert (output / "downloads/cowork-setup.pyz").is_file()
-    hosting = json.loads((output / "firebase.json").read_text())["hosting"]
+    deployment = json.loads((output / "firebase.json").read_text())
+    assert set(deployment) == {"hosting"}
+    hosting = deployment["hosting"]
     assert hosting["public"] == "."
+    assert "rewrites" not in hosting
     assert any(
         item["key"] == "Cache-Control" and item["value"] == "no-store"
         for item in hosting["headers"][0]["headers"]
     )
     with pytest.raises(FileExistsError):
         module.build(config, output)
+    config.write_text(settings(api_base_url="").model_dump_json())
+    with pytest.raises(ValueError, match="explicit HTTPS"):
+        module.build(config, tmp_path / "missing-api")
+    assert not (tmp_path / "missing-api").exists()

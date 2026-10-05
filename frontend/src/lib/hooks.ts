@@ -1,21 +1,33 @@
 import { useCallback, useEffect, useRef, useState } from "react"
-import { api } from "./session"
+import { api, session } from "./session"
 
-export function useResource<T>(path: string | null, poll = false) {
+export function useResource<T>(path: string | null, poll = false, cache = false) {
   const [revision, setRevision] = useState(0)
-  const [state, setState] = useState<{ path: string | null; data: T | null; error: string; loading: boolean; updated: Date | null }>({ path, data: null, error: "", loading: true, updated: null })
+  const [state, setState] = useState<{ path: string | null; data: T | null; error: string; loading: boolean; updated: Date | null }>(() => {
+    const saved = cache ? session.cachedResource<T>(path) : undefined
+    return { path, data: saved?.data ?? null, error: "", loading: !saved, updated: saved?.updated ?? null }
+  })
   const refresh = useCallback(() => setRevision(value => value + 1), [])
   useEffect(() => {
     const controller = new AbortController()
     if (!path) return
+    const saved = cache && revision === 0 ? session.cachedResource<T>(path) : undefined
+    if (saved) {
+      setState({ path, ...saved, error: "", loading: false })
+      return
+    }
     setState(previous => ({ path, data: previous.path === path ? previous.data : null, error: "", loading: true, updated: previous.updated }))
     api<T>(path, { signal: controller.signal }).then(data => {
-      if (!controller.signal.aborted) setState({ path, data, error: "", loading: false, updated: new Date() })
+      if (!controller.signal.aborted) {
+        const updated = new Date()
+        if (cache) session.saveResource(path, data, updated)
+        setState({ path, data, error: "", loading: false, updated })
+      }
     }).catch(error => {
       if (!controller.signal.aborted) setState({ path, data: null, error: error.message, loading: false, updated: null })
     })
     return () => controller.abort()
-  }, [path, revision])
+  }, [path, revision, cache])
   useEffect(() => {
     if (!poll) return
     const update = () => { if (!document.hidden) refresh() }

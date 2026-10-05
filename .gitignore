@@ -12,7 +12,5 @@ __pycache__/
 secrets/
 dist/
 *.egg-info/
-functions/node_modules/
 frontend/node_modules/
-functions/.env*
 firebase-debug.log*

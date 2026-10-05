@@ -138,7 +138,7 @@ class PostgresStore:
                 "CREATE TABLE IF NOT EXISTS hub_schema (id INTEGER PRIMARY KEY CHECK(id=1), version INTEGER NOT NULL)"
             )
             row = db.execute("SELECT version FROM hub_schema WHERE id=1").fetchone()
-            if row and row["version"] not in (4, 5, 6, SCHEMA_VERSION):
+            if row and row["version"] not in (4, 5, 6, 7, SCHEMA_VERSION):
                 raise RuntimeError("Unsupported PostgreSQL hub schema version")
             for statement in POSTGRES_SCHEMA.split(";"):
                 if statement.strip():

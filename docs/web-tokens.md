@@ -16,7 +16,7 @@
 이번 확인은 새 토큰의 읽기 전용 인증 검증이며, 상시 MCP·실행기의 기존 토큰 설정은 유지한다.
 새 토큰을 사용한 계산 제출과 운영 토큰 폐기 후 인증 거절은 아직 확인하지 않았다.
 2026-09-29: [Firebase Hosting](https://mcp-cowork-pgl.web.app)과 공개 HTTPS 중계를 배포했다.
-중계 구성과 운영 절차는 [Firebase Hosting·SSH 중계](firebase-hosting.md)에 정리했다.
+웹 배포와 직접 API 연결 운영 절차는 [Firebase Hosting과 허브 API](firebase-hosting.md)에 정리했다.
 같은 날 `/web/`를 [서버 관리 플랫폼](server-platform.md)으로 확장했고 개인 토큰은 왼쪽 메뉴에서 관리한다.
 사용자 승인에 따라 `ezy`를 첫 웹 관리자로 지정했다. 스키마 5 적용 후에도 새 토큰의 실제 MCP 조회에 성공했다.
 
@@ -49,7 +49,7 @@ Google 로그인 자체가 서버 사용 권한을 주지는 않는다. 관리�
 확인·승인해야 하고, 새 컨테이너는 별도 승인 절차를 따른다.
 Discord 채널은 최초 계정 등록 때 입력하고 이후 변경은 관리자가 처리한다. 사용자는 **Discord 알림**에서 본인 연결 상태를 확인한다.
 
-같은 탭에서 새로고침하면 Firebase가 저장한 로그인 상태를 복원한다. 마지막으로 조회한 허브
+같은 브라우저에서 새로고침하거나 브라우저를 닫았다 다시 열면 Firebase가 저장한 로그인 상태를 복원한다. 마지막으로 조회한 허브
 프로필도 `sessionStorage`에 최대 30분간 보관해, 같은 Firebase 계정·프로젝트·허브일 때 화면을
 먼저 열고 최신 권한을 뒤에서 조회한다. 갱신 중 입력한 값은 유지하고 변경된 서버 권한은 반영한다.
 로그아웃·계정 전환·인증 거절 시 캐시를 지우며, 저장소가 차단됐거나 캐시가 만료되면 새로 조회한다.
@@ -75,7 +75,8 @@ Discord 채널은 최초 계정 등록 때 입력하고 이후 변경은 관리�
 
 설정 초안은 현재 웹이 사용하는 Firebase 공개 설정 네 필드와 새 웹 출처를 반영했다.
 Google Analytics·Storage·메시징은 현재 기능에서 사용하지 않는다.
-`api_base_url`은 SSH로 전달한 허브와 같은 출처를 사용하도록 비워 두었다.
+2026-10-05부터 `api_base_url`은 `https://203.255.11.226`으로 설정한다.
+브라우저가 HTTPS 허브 웹 API를 직접 호출하며, Firebase 함수와 SSH 중계를 거치지 않는다.
 현재 설정의 `users`에는 사용자 본인이 제공한 Firebase UID와 `ezy`의 연결 한 건이 있다.
 계정 식별자는 비공개 설정 파일에서 관리한다.
 
@@ -215,14 +216,18 @@ python3 scripts/enable_local_runner.py --user ezy \
 
 Firebase Hosting에 페이지를 올리는 것만으로
 내부망 `http://192.168.10.41:8080`이 외부에서 접근 가능해지거나 HTTPS로 바뀌지는 않는다.
-현재는 Cloud Functions·SSH 중계가 같은 Hosting 출처의 `/v1/web/**`를 처리하므로
-별도 공개 허브 포트나 IP 인증서는 필요 없다. 접근 범위는 기존 허브 권한을 따른다.
+현재는 nginx가 `https://203.255.11.226`의 443 포트에서 웹 API만 내부 허브로 전달한다.
+IP 인증서와 자동 갱신을 적용했으며, 브라우저는 Firebase 함수·SSH를 거치지 않고 연결한다.
+접근 범위는 기존 허브의 인증·권한 검사를 따른다.
 
 허브와 같은 HTTPS 주소에서 제공하려면 `/web/`로 접속한다. 이 경우 `api_base_url`은 빈 문자열로
 두어 같은 주소를 사용할 수 있으며 다른 웹 출처를 쓰지 않으면 `allowed_origins`도 빈 목록으로 둔다.
 HTTP는 로컬 개발의 `localhost`/`127.0.0.1`에서만 허용한다.
 
-### 이전에 검토한 직접 HTTPS 연결 (미적용)
+### 이전 직접 HTTPS 연결 검토 기록 (2026-09-23)
+
+아래는 당시 적용하지 않았던 8443 포트 검토 기록이다. 현재 운영은 2026-10-05에 적용한
+443 포트 직접 연결이며, [현재 운영 안내](firebase-hosting.md)를 따른다.
 
 2026-09-23에는 Firebase Hosting·Google 로그인과 연구실 서버의 HTTPS API를 직접 연결하는 방식을 검토했다.
 허브 호스트의 공인 IP는 사용자 확인값 `203.255.11.226`이며, 내부 허브 주소는
@@ -230,7 +235,7 @@ HTTP는 로컬 개발의 `localhost`/`127.0.0.1`에서만 허용한다.
 `https://203.255.11.226:8443`이다. 포트 사용 여부와 방화벽·외부 접근은 적용 전에 확인한다.
 PostgreSQL은 기존 내부 연결을 유지한다.
 
-현재 컨테이너에서 확인한 결과 내부 허브는 `status=ok`, `database=postgresql`을 반환했다.
+당시 컨테이너에서 확인한 결과 내부 허브는 `status=ok`, `database=postgresql`을 반환했다.
 공인 IP의 80번은 Nginx에서 HTTP 502를 반환했고 8443번은 연결을 거절했다.
 이는 관측 결과이며 8443번이 호스트에서 비어 있다는 확인이나 외부 인터넷에서의 접속 검증은 아니다.
 
@@ -249,8 +254,8 @@ Certbot webroot 방식의 IP 인증서는 5.4 이상을 사용하고, 6일 유�
 
 ## Firebase Hosting으로 화면 배포
 
-현재 사용하는 SSH 중계 배포는 [별도 안내](firebase-hosting.md)의 `--relay` 빌드를 따른다.
-아래는 허브에 별도 공개 HTTPS 주소가 이미 있을 때의 정적 Hosting 배포 절차다.
+직접 API 연결 배포는 아래 정적 Hosting 절차를 따른다.
+운영 값과 검증 절차는 [별도 안내](firebase-hosting.md)에 있다.
 설정 파일의 `api_base_url`은 허브 HTTPS 주소, `allowed_origins`는 실제 웹 주소로 맞춘다.
 
 ```sh
@@ -280,8 +285,9 @@ firebase deploy --only hosting --project YOUR_PROJECT_ID
 우회하지 않으며, Firebase ID 토큰도 기존 계산·관리 API의 인증을 대신하지 않는다.
 토큰 발급·폐기는 기존 관리 서비스와 DB를 사용한다. Firebase에는 MCP 토큰을 저장하지 않는다.
 MCP 토큰 원문은 페이지 메모리에서만 유지하며 브라우저 localStorage/sessionStorage에 저장하지 않는다.
-Google 로그인은 Firebase의 `browserSessionPersistence`로 같은 탭의 새로고침에도 유지한다.
-Firebase 인증 상태는 sessionStorage에 저장되며 로그아웃하거나 탭을 닫으면 해제된다.
+Google 로그인은 Firebase의 `browserLocalPersistence`로 브라우저를 닫았다 다시 열어도 유지한다.
+Firebase SDK가 인증 상태를 로컬 저장소에 보관하고 갱신한다. 직접 로그아웃하거나 사이트 데이터를
+삭제하면 해제되며, 시크릿 모드나 브라우저 종료 시 사이트 데이터 삭제 설정에서는 유지되지 않을 수 있다.
 [Firebase 인증 유지 안내](https://firebase.google.com/docs/auth/web/auth-state-persistence)를 참고한다.
 
 실제 운영 적용 완료 기준은 Google 로그인 성공, 미허용 계정 차단, 첫 토큰 다운로드,

@@ -27,7 +27,7 @@ module.exports=async function checkLanguages({open,navigate,layout,output,until}
   assert.equal(await page.title(),'Server management · Cowork');
   for(const width of [1440,390,320]) {
     await page.setViewportSize({width,height:1050});
-    for(const hash of ['servers','servers/227','jobs','environments','tokens','notifications','guide','admin']) {
+    for(const hash of ['servers','servers/227','jobs','environments','tokens','notifications','guide','how-it-works','admin']) {
       await navigate(page,hash);
       await page.locator('main [role="status"][aria-label="Loading"]').first().waitFor({state:'hidden'});
       if(hash==='guide') {

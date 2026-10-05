@@ -11,7 +11,7 @@ const root = path.resolve(__dirname, '..'), source = path.join(root, 'src/cowork
 const output = process.env.COWORK_BROWSER_OUTPUT || path.join(root, '.local/verification/react-migration/browser');
 const errors = [], cspErrors = [], checks = [];
 const sdk = `let listener;window.testAuth={popupCalls:0,emit(name){return listener(name?{uid:'firebase-'+name,email:name+'@example.test',getIdToken:async()=>'synthetic-'+name}:null)}};
-export const getAuth=()=>({}),browserSessionPersistence={},setPersistence=async()=>{};
+export const initializeAuth=()=>({}),browserLocalPersistence={},browserPopupRedirectResolver={};
 export function onAuthStateChanged(auth,callback){listener=callback;window.testAuth.ready=true;}
 export async function signOut(){window.testAuth.emit(null)}
 export async function signInWithPopup(){window.testAuth.popupCalls++}
@@ -29,8 +29,8 @@ const until = async condition => { const deadline = Date.now() + 8000; while(!(a
     for(const [key,value] of Object.entries(headers)) response.setHeader(key,value);
     if(name === 'config.json') { response.setHeader('Content-Type','application/json'); response.end(JSON.stringify({enabled:true,firebase:{projectId:'fixture-project'},api_base_url:''}));return; }
     if(name === 'review-font.otf' && reviewFont) { response.setHeader('Content-Type','font/otf');response.end(reviewFont);return; }
-    if(!['index.html','favicon.svg'].includes(name) && !/^assets\/[\w.-]+\.(js|css)$/.test(name)) { response.writeHead(404);response.end();return; }
-    response.setHeader('Content-Type', name.endsWith('.js') ? 'text/javascript' : name.endsWith('.css') ? 'text/css' : name.endsWith('.svg') ? 'image/svg+xml' : 'text/html');
+    if(!['index.html','favicon.svg'].includes(name) && !/^assets\/[\w.-]+\.(js|css|png)$/.test(name)) { response.writeHead(404);response.end();return; }
+    response.setHeader('Content-Type', name.endsWith('.js') ? 'text/javascript' : name.endsWith('.css') ? 'text/css' : name.endsWith('.svg') ? 'image/svg+xml' : name.endsWith('.png') ? 'image/png' : 'text/html');
     let body = await fs.readFile(path.join(source,name));
     if(name.endsWith('.css') && reviewFont) body = Buffer.concat([body,Buffer.from("\n@font-face{font-family:Review;src:url('/review-font.otf')}body,input,button,select{font-family:Review,sans-serif}")]);
     response.end(body);
@@ -60,6 +60,8 @@ const until = async condition => { const deadline = Date.now() + 8000; while(!(a
         if(state.fail[endpoint]) {const failure=state.fail[endpoint];delete state.fail[endpoint];return json(route,{error:{code:failure.code}},failure.status);}
         let body;
         if(endpoint==='/profile') { if(state.unlinked.has(user)) return json(route,{error:{code:'WEB_ACCOUNT_NOT_LINKED'}},403); body=state.profiles[user]||{...fixtures.profile,user_id:user,is_admin:user==='alice'}; }
+        else if(endpoint==='/catalog') {const {files,...overview}=require('./web_catalog.cjs').data;body=overview;}
+        else if(endpoint==='/catalog/files') body=require('./web_catalog.cjs').files(url.searchParams);
         else if(endpoint==='/onboarding') {if(method==='POST') state.enrollment={state:'PENDING',...request.body,channel_id:'fixture-channel',webhook_url:undefined};body=state.enrollment;}
         else if(endpoint==='/admin/servers'||endpoint==='/servers') body=state.nodes;
         else if(endpoint==='/admin/enrollments') body={...fixtures.pageData(state.enrollments),total:state.enrollments.length};
@@ -107,6 +109,16 @@ const until = async condition => { const deadline = Date.now() + 8000; while(!(a
       assert.equal(result.overflow,false,name+' overflow '+width);assert.deepEqual(result.touching,[],name+' touching '+width);assert.deepEqual(result.small,[],name+' small '+width);assert.deepEqual(result.misplacedTabs,[],name+' tab bounds '+width);
       checks.push({name,width,...result});
     }
+    if(process.env.COWORK_CATALOG_ONLY==='1') {
+      const loading=await require('./web_loading.cjs').run({open,navigate,until});
+      const catalog=await require('./web_catalog.cjs').run({open,navigate,layout,output,until});
+      const availability=await require('./web_catalog_availability.cjs').run({open,navigate,layout,output,until});
+      const sorting=await require('./web_catalog_sorting.cjs').run({open,navigate,layout,until});
+      assert.deepEqual(errors,[]);assert.deepEqual(cspErrors,[]);
+      const report={catalog,availability,sorting,loading,responsive_checks:checks,page_errors:errors,csp_errors:cspErrors,production_mutations:0};
+      await fs.writeFile(path.join(output,'report.json'),JSON.stringify(report,null,2)+'\n');
+      console.log(JSON.stringify({...report,responsive_checks:checks.length}));return;
+    }
     const main=await open('admin'), {page,state}=main;
     await page.getByRole('button',{name:'계정 승인',exact:true}).waitFor();
     for(const width of [1440,1024,768,390,320]) {
@@ -118,7 +130,7 @@ const until = async condition => { const deadline = Date.now() + 8000; while(!(a
         await layout(page,'admin-'+tab,width);
         if([1440,390].includes(width)&&['새 계정 승인','사용자 권한'].includes(tab)) await page.screenshot({path:path.join(output,`admin-${tab}-${width}.png`),fullPage:true});
       }
-      for(const hash of ['servers','servers/227','jobs','environments','tokens','notifications','guide']) {
+      for(const hash of ['servers','servers/227','jobs','environments','tokens','notifications','guide','how-it-works']) {
         await navigate(page,hash);
         await page.locator('main [role="status"][aria-label="불러오는 중"]').first().waitFor({state:'hidden'});
         if(hash==='guide') {await page.selectOption('#guide-node','227');await page.locator('#guide-result').waitFor();}
@@ -183,30 +195,34 @@ const until = async condition => { const deadline = Date.now() + 8000; while(!(a
     const cached=await open('guide'), p=cached.page;
     await p.locator('#guide-root').waitFor();cached.state.hold.add('GET /profile');await p.reload();await until(() => p.evaluate(()=>window.testAuth?.ready));await p.evaluate(()=>window.testAuth.emit('alice'));await p.locator('#guide-root').waitFor();await until(()=>cached.state.held.length===1);
     await p.fill('#guide-root','/tmp/in-progress-install');await cached.json(cached.state.held.shift().route,{error:{code:'HUB_UNAVAILABLE'}},503);await p.getByRole('alert').waitFor();assert.equal(await p.locator('#guide-root').inputValue(),'/tmp/in-progress-install');assert.equal(await p.locator('#portal').isVisible(),true);
-    await p.evaluate(()=>{location.hash='servers';});await until(()=>cached.state.held.length===1);cached.state.unlinked.add('alice');await cached.json(cached.state.held.shift().route,{error:{code:'WEB_ACCOUNT_NOT_LINKED'}},403);await p.locator('#onboarding-form').waitFor();assert.equal(await p.locator('#portal').count(),0);assert.equal(await p.evaluate(()=>sessionStorage.getItem('cowork.profile.v1')),null);
+    await p.evaluate(()=>{location.hash='servers';});await until(()=>cached.state.held.length===1);cached.state.unlinked.add('alice');await cached.json(cached.state.held.shift().route,{error:{code:'WEB_ACCOUNT_NOT_LINKED'}},403);await p.locator('#onboarding-form').waitFor();assert.equal(await p.locator('#portal').count(),0);assert.equal(await p.evaluate(()=>localStorage.getItem('cowork.profile.v1')),null);
     cached.state.hold.clear();await p.evaluate(()=>window.testAuth.emit('bob'));await p.locator('#portal').waitFor();assert.equal(await p.getByRole('link',{name:'관리자',exact:true}).count(),0);assert(!/alice/.test(await p.locator('body').innerText()));await cached.context.close();
 
     const signup=await open('guide','carol');await signup.page.locator('#onboarding-name').fill('carol');await signup.page.locator('#onboarding-uid').fill('1201');await signup.page.locator('#onboarding-gid').fill('1200');await signup.page.locator('#onboarding-webhook').fill(hook);await signup.page.locator('#onboarding-submit').click();await signup.page.locator('#onboarding-refresh').waitFor();assert(!/FAKE_BROWSER_ONLY/.test(await signup.page.locator('body').innerHTML()));assert.equal(signup.state.mutations[0].body.account_name,'carol');await signup.context.close();
 
     // Late list/issuance responses cannot resurrect an older token list or a logged-out account.
     const race=await open('guide');race.state.hold.add('GET /tokens');await navigate(race.page,'tokens');await until(()=>race.state.held.length===1);await race.page.locator('#create').click();await race.page.locator('#download-panel').waitFor();await until(()=>race.state.held.length===2);const [older,newer]=race.state.held.splice(0);await race.json(newer.route,race.state.tokens);await race.page.locator('#token-list').getByText('alice-MCP',{exact:true}).waitFor();await race.json(older.route,[]);assert.match(await race.page.locator('#token-list').innerText(),/alice-MCP/);
-    race.state.hold.add('POST /tokens');await race.page.locator('#dismiss-download').click();await race.page.locator('#create').click();await until(()=>race.state.held.length===1);await race.page.locator('#logout').click();await race.page.locator('#login').waitFor();await race.json(race.state.held.shift().route,{id:'late',name:'late',token:'never_visible'});assert.equal(await race.page.locator('#portal').count(),0);assert.equal(await race.page.evaluate(()=>sessionStorage.getItem('cowork.profile.v1')),null);assert(!/never_visible/.test(await race.page.locator('body').innerHTML()));await race.context.close();
+    race.state.hold.add('POST /tokens');await race.page.locator('#dismiss-download').click();await race.page.locator('#create').click();await until(()=>race.state.held.length===1);await race.page.locator('#logout').click();await race.page.locator('#login').waitFor();await race.json(race.state.held.shift().route,{id:'late',name:'late',token:'never_visible'});assert.equal(await race.page.locator('#portal').count(),0);assert.equal(await race.page.evaluate(()=>localStorage.getItem('cowork.profile.v1')),null);assert(!/never_visible/.test(await race.page.locator('body').innerHTML()));await race.context.close();
     // Malformed, expired, other-account and other-hub caches must not expose a portal.
     const invalid = await open('guide',false);
     const validCache = {uid:'firebase-alice',scope:JSON.stringify(['fixture-project',origin+'/']),savedAt:Date.now(),profile:fixtures.profile};
     for(const value of ['broken',JSON.stringify({...validCache,savedAt:0}),JSON.stringify({...validCache,uid:'firebase-bob'}),JSON.stringify({...validCache,scope:'another-hub'})]) {
-      invalid.state.hold.add('GET /profile');await invalid.page.evaluate(value=>sessionStorage.setItem('cowork.profile.v1',value),value);
+      invalid.state.hold.add('GET /profile');await invalid.page.evaluate(value=>localStorage.setItem('cowork.profile.v1',value),value);
       await invalid.page.evaluate(()=>{void window.testAuth.emit('alice');});await until(()=>invalid.state.held.length===1);
       assert.equal(await invalid.page.locator('#portal').count(),0);
       await invalid.json(invalid.state.held.shift().route,fixtures.profile);await invalid.page.locator('#portal').waitFor();
     }
     invalid.state.hold.clear();invalid.state.fail['/profile']={status:401,code:'UNAUTHENTICATED'};
-    await invalid.page.evaluate(()=>{void window.testAuth.emit('alice');});await invalid.page.locator('#login').waitFor();assert.equal(await invalid.page.locator('#portal').count(),0);assert.equal(await invalid.page.evaluate(()=>sessionStorage.getItem('cowork.profile.v1')),null);await invalid.context.close();
+    await invalid.page.evaluate(()=>{void window.testAuth.emit('alice');});await invalid.page.locator('#login').waitFor();assert.equal(await invalid.page.locator('#portal').count(),0);assert.equal(await invalid.page.evaluate(()=>localStorage.getItem('cowork.profile.v1')),null);await invalid.context.close();
     const storage = await open('guide',false);
     await storage.page.evaluate(()=>{Storage.prototype.getItem=()=>{throw Error('unavailable')};Storage.prototype.setItem=()=>{throw Error('unavailable')};void window.testAuth.emit('bob');});await storage.page.locator('#guide-root').waitFor();assert.equal(await storage.page.locator('#guide-root').inputValue(),'/10Gdata/bob/cowork');await storage.context.close();
     const languages=await require('./web_languages.cjs')({open,navigate,layout,output,until});
+    const howItWorks=await require('./web_how_it_works.cjs')({open,navigate,layout,output,until});
+    const catalog=await require('./web_catalog.cjs').run({open,navigate,layout,output,until});
+    const availability=await require('./web_catalog_availability.cjs').run({open,navigate,layout,output,until});
+    const sorting=await require('./web_catalog_sorting.cjs').run({open,navigate,layout,until});
     assert.deepEqual(errors,[]);assert.deepEqual(cspErrors,[]);
-    const report={languages,responsive_checks:checks,auth_cache:true,account_isolation:true,late_response_protection:true,onboarding:true,admin_mutations:true,token_copy_download_revoke:true,ssh_idempotency:true,guide_shell_quoting:true,page_errors:errors,csp_errors:cspErrors,production_mutations:0};
+    const report={languages,howItWorks,catalog,availability,sorting,responsive_checks:checks,auth_cache:true,account_isolation:true,late_response_protection:true,onboarding:true,admin_mutations:true,token_copy_download_revoke:true,ssh_idempotency:true,guide_shell_quoting:true,page_errors:errors,csp_errors:cspErrors,production_mutations:0};
     await fs.writeFile(path.join(output,'report.json'),JSON.stringify(report,null,2)+'\n');console.log(JSON.stringify({...report,responsive_checks:checks.length}));
   } finally {await browser?.close();await new Promise(resolve=>server.close(resolve));}
 })().catch(error=>{console.error(error);process.exitCode=1;});

@@ -1,4 +1,5 @@
 export const errors: Record<string, string> = {
+  CATALOG_UNAVAILABLE: "데이터 목록을 불러오지 못했습니다. 잠시 후 다시 시도하세요.",
   UNAUTHENTICATED: "로그인이 만료됐거나 유효하지 않습니다. 다시 로그인하세요.",
   WEB_NOT_CONFIGURED: "관리자가 웹 로그인 설정을 준비하고 있습니다.",
   WEB_AUTH_UNAVAILABLE: "로그인을 확인할 수 없습니다. 잠시 후 다시 시도하거나 관리자에게 문의하세요.",

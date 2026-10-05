@@ -10,6 +10,7 @@ from pathlib import Path
 import httpx
 import pytest
 import uvicorn
+from test_web import settings, verify
 
 pytest.importorskip("mcp", reason="Install the mcp extra to test the adapter")
 
@@ -27,6 +28,44 @@ def token_file(path, token):
     return path
 
 
+def test_catalog_write_tools_over_real_stdio(rig, tmp_path, live_hub):
+    path = token_file(tmp_path / "catalog.token", rig.alice)
+
+    async def scenario():
+        parameters = StdioServerParameters(command=sys.executable, args=[
+            "-m", "cowork_hub.mcp_server", "--hub-url", live_hub, "--token-file", str(path),
+        ])
+        async with asyncio.timeout(25):
+            async with stdio_client(parameters) as (read, write):
+                async with ClientSession(read, write) as session:
+                    await session.initialize()
+
+                    async def call(name, args=None):
+                        result = await session.call_tool(name, args or {})
+                        assert not result.isError, result
+                        assert rig.alice not in result.model_dump_json()
+                        return result.structuredContent
+
+                    overview = await call("catalog_overview")
+                    body = {"expected_revision": overview["revision"], "request_key": "stdio-registration-01",
+                            "create_missing": True, "files": [{"project": "Test", "species": "Oryza sativa",
+                            "sample": "Rice", "data_type": "ONT", "path": "/old/rice.fastq.gz", "bytes": 100, "node_id": "A"}]}
+                    preview = await call("catalog_register_files", {"request": body})
+                    assert not preview["applied"]
+                    assert (await call("catalog_files"))["total"] == 0
+                    result = await call("catalog_register_files", {"request": {**body, "dry_run": False}})
+                    fid = result["changes"][0]["file_id"]
+                    assert (await call("catalog_files", {"q": "rice"}))["total"] == 1
+                    relocation = {"request_key": "stdio-relocation-01", "expected_revision": result["revision"],
+                                  "dry_run": False, "files": [{"file_id": fid, "expected_path": "/old/rice.fastq.gz",
+                                  "new_path": "/new/rice.fastq.gz", "node_id": "A", "observed_bytes": 100, "content_unchanged": True}]}
+                    assert (await call("catalog_relocate_files", {"request": relocation}))["applied"]
+                    assert (await call("catalog_file", {"file_id": fid}))["file"]["path"] == "/new/rice.fastq.gz"
+                    assert len((await call("catalog_history", {"file_id": fid}))["items"]) == 2
+
+    asyncio.run(scenario())
+
+
 @pytest.fixture
 def live_hub(rig):
     listener = socket.socket()
@@ -34,7 +73,7 @@ def live_hub(rig):
     address = f"http://127.0.0.1:{listener.getsockname()[1]}"
     server = uvicorn.Server(
         uvicorn.Config(
-            create_app(rig.hub, background=False),
+            create_app(rig.hub, background=False, web_config=settings(admin_users=["alice"], catalog_access="approved"), web_verify=verify),
             log_level="error",
             access_log=False,
         )
@@ -82,12 +121,18 @@ def test_real_stdio_protocol_and_scoped_readonly_flow(rig, tmp_path, live_hub):
                         "submit_job",
                         "cancel_job",
                         "register_ssh_environment",
+                        "catalog_overview",
+                        "catalog_files",
+                        "catalog_file",
+                        "catalog_history",
+                        "catalog_register_files",
+                        "catalog_relocate_files",
                     }
                     assert all(
                         tool.annotations.readOnlyHint
                         == (
                             tool.name
-                            not in {"submit_job", "cancel_job", "register_ssh_environment"}
+                            not in {"submit_job", "cancel_job", "register_ssh_environment", "catalog_register_files", "catalog_relocate_files"}
                         )
                         for tool in catalog.tools
                     )

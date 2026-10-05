@@ -17,6 +17,7 @@ from mcp.server.fastmcp.exceptions import ToolError
 from mcp.types import ToolAnnotations
 from pydantic import Field
 
+from .catalog_models import CatalogRegister, CatalogRelocate
 from .mcp_planning import plan_with_choices
 from .models import Identifier, JobSpec, JobSubmit
 from .runner import RunnerError
@@ -43,6 +44,12 @@ HUB_ERROR_CODES = {
     "NOTIFICATION_NOT_CONFIGURED",
     "UNSATISFIABLE",
     "IDEMPOTENCY_CONFLICT",
+    "CATALOG_CONFLICT",
+    "CATALOG_PATH_EXISTS",
+    "CATALOG_IDENTITY_MISMATCH",
+    "CATALOG_AMBIGUOUS",
+    "CATALOG_METADATA_INCOMPLETE",
+    "CATALOG_UNAVAILABLE",
 }
 READ_ONLY = ToolAnnotations(
     readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=True
@@ -204,7 +211,12 @@ def create_mcp(client: HubClient, runner_config: Path | None = None):
             "The target needs a runner, not an agent or MCP server. The hub never opens SSH. "
             "This adapter has no administrator or Worker reporting tools. "
             "Do not bypass the hub by executing a requested job locally when a tool fails. "
-            "Never request or include authentication tokens in tool arguments."
+            "Never request or include authentication tokens in tool arguments. "
+            "Catalog tools manage FASTQ metadata only: they never move or read sequencing files. "
+            "Use catalog_overview and catalog_files before registration or relocation. "
+            "Preview writes with dry_run=true, then apply the same request with dry_run=false "
+            "only within the user's requested scope. Preserve request_key and content on uncertain retries. "
+            "Relocation keeps file IDs and statistics and requires an observed unchanged-file destination."
         ),
         log_level="WARNING",
     )
@@ -249,6 +261,52 @@ def create_mcp(client: HubClient, runner_config: Path | None = None):
     async def notification_status() -> dict[str, Any]:
         """Read the user's Discord configuration status. Does not send a message."""
         return await client.request("GET", "/v1/notifications")
+
+    @server.tool(annotations=READ_ONLY)
+    async def catalog_overview() -> dict[str, Any]:
+        """Read sequencing projects, species, samples, data types and the current revision."""
+        return await client.request("GET", "/v1/catalog")
+
+    @server.tool(annotations=READ_ONLY)
+    async def catalog_files(
+        q: str = "", project: str = "", species: str = "", sample: str = "", dataset: str = "",
+        page: Annotated[int, Field(ge=1, le=100000)] = 1, page_size: PageSize = 25,
+    ) -> dict[str, Any]:
+        """Find FASTQ records and stable file IDs by path/name or hierarchy IDs. Pages include revision."""
+        return await client.request("GET", "/v1/catalog/files", params={
+            "q": q, "project": project, "species": species, "sample": sample, "dataset": dataset,
+            "page": page, "page_size": page_size,
+        })
+
+    @server.tool(annotations=READ_ONLY)
+    async def catalog_file(file_id: Identifier) -> dict[str, Any]:
+        """Inspect one file's location, metadata, statistics and recorded merged inputs."""
+        return await client.request("GET", f"/v1/catalog/files/{file_id}")
+
+    @server.tool(annotations=READ_ONLY)
+    async def catalog_history(file_id: Identifier, limit: PageSize = 50) -> dict[str, Any]:
+        """Read recent registration/path-change history for one stable catalog file ID."""
+        return await client.request("GET", f"/v1/catalog/files/{file_id}/history", params={"limit": limit})
+
+    @server.tool(annotations=WRITE)
+    async def catalog_register_files(request: CatalogRegister) -> dict[str, Any]:
+        """Preview or register FASTQ metadata. New hierarchy creation requires create_missing=true.
+
+        Default dry_run=true never saves changes. Use explicit metadata and observed file sizes;
+        keep unknown statistics absent. A commit is atomic and idempotent by request_key.
+        This tool never uploads, computes statistics, or moves files.
+        """
+        return await client.request("POST", "/v1/catalog/register", body=request.model_dump())
+
+    @server.tool(annotations=WRITE)
+    async def catalog_relocate_files(request: CatalogRelocate) -> dict[str, Any]:
+        """Preview or record completed moves of unchanged FASTQs; never perform the move itself.
+
+        Obtain stable file_id, expected_path and expected_revision from current catalog reads.
+        Confirm the destination's server, absolute path and byte size. Preserve the request on
+        uncertain retries. File IDs, statistics and merged input relationships are preserved.
+        """
+        return await client.request("POST", "/v1/catalog/relocate", body=request.model_dump())
 
     @server.tool(annotations=READ_ONLY)
     async def plan_job(

@@ -39,8 +39,9 @@ def release_files(source):
         raise SetupError("React 웹 빌드가 없습니다. npm --prefix frontend run build를 먼저 실행하세요.")
     files += [web / "index.html", web / "favicon.svg"]
     files += sorted(path for path in (web / "assets").rglob("*") if path.is_file())
-    for pattern in ("*.md", "*.yaml"):
-        files += sorted((source / "skills/cowork-jobs").rglob(pattern))
+    for skill in ("cowork-jobs", "cowork-data-library"):
+        for pattern in ("*.md", "*.yaml"):
+            files += sorted((source / "skills" / skill).rglob(pattern))
     for path in files:
         if path.is_symlink() or not path.is_file():
             raise SetupError("배포 파일에 누락 또는 심볼릭 링크가 있습니다.")
@@ -199,13 +200,13 @@ def skill_file_available(path):
         return False
 
 
-def link_skill(source, client):
+def link_skill(source, client, name="cowork-jobs"):
     home = Path.home()
     base = home / (".agents" if client == "codex" else ".claude") / "skills"
-    target = base / "cowork-jobs"
+    target = base / name
     candidates = [target]
     if client == "codex":
-        candidates.append(home / ".codex/skills/cowork-jobs")
+        candidates.append(home / ".codex/skills" / name)
     existing = []
     available = False
     for path in candidates:
@@ -224,12 +225,12 @@ def link_skill(source, client):
     if available:
         return "existing"
     if existing:
-        print("cowork-jobs 자동 선택 준비 안 됨: 위 경로의 링크 대상·SKILL.md·접근 권한을 복구한 뒤 처음 설치 명령을 다시 실행하세요.", file=sys.stderr)
+        print(name + " 자동 선택 준비 안 됨: 위 경로의 링크 대상·SKILL.md·접근 권한을 복구한 뒤 처음 설치 명령을 다시 실행하세요.", file=sys.stderr)
         return "unavailable"
-    if not skill_file_available(source / "skills/cowork-jobs"):
-        raise SetupError("설치 파일에서 cowork-jobs/SKILL.md를 읽을 수 없습니다. 설치 파일을 다시 내려받으세요.")
+    if not skill_file_available(source / "skills" / name):
+        raise SetupError("설치 파일에서 " + name + "/SKILL.md를 읽을 수 없습니다. 설치 파일을 다시 내려받으세요.")
     base.mkdir(parents=True, exist_ok=True)
-    target.symlink_to(source / "skills/cowork-jobs", target_is_directory=True)
+    target.symlink_to(source / "skills" / name, target_is_directory=True)
     return "installed"
 
 
@@ -255,7 +256,19 @@ def connect_client(bin_path, root, hub, client):
                  "--runner-config", str(root / "state/runner.json")]
         command(args, "MCP 등록")
         mcp = "installed"
-    return {"mcp": mcp, "skill": link_skill(root / "source", client)}
+    return {"mcp": mcp, "skill": link_skill(root / "source", client),
+            "catalog_skill": link_skill(root / "source", client, "cowork-data-library")}
+
+
+def update_client_skills(source):
+    """Add the new skill to existing Cowork clients without invoking their CLIs."""
+    home = Path.home()
+    results = {}
+    for client, bases in (("codex", (".agents", ".codex")), ("claude", (".claude",))):
+        if any(skill_file_available(home / base / "skills" / name)
+               for base in bases for name in ("cowork-jobs", "cowork-data-library")):
+            results[client] = link_skill(source, client, "cowork-data-library")
+    return results
 
 
 def enable_autostart(python, config, source):
@@ -417,6 +430,8 @@ def setup(args, source):
         configured = command([connector, "configure", *configure_args, "--config", config], "환경 등록", json_output=True)
         client = ({"mcp": "preserved", "skill": "preserved"} if getattr(args, "update", False)
                   else connect_client(bin_path, root, hub, args.client))
+        if getattr(args, "update", False):
+            client["catalog_skills"] = update_client_skills(installed_source)
         stop_previous_connector(connector, config)
         automatic = ({"autostart_configured": False, "reason": "자동 시작 등록을 생략했습니다."}
                      if getattr(args, "no_autostart", False) else enable_autostart(bin_path / "python", config, source))
@@ -484,6 +499,11 @@ def main():
         print("기존 cowork-jobs 스킬을 보존했습니다.")
     elif result["skill"] == "unavailable":
         print("주의: 프로그램은 설치되었지만 스킬 자동 선택은 준비되지 않았습니다. 위 스킬 경로 안내를 확인하세요.")
+    catalog_skills = {result.get("catalog_skill"), *result.get("catalog_skills", {}).values()}
+    if "installed" in catalog_skills:
+        print("FASTQ 등록·경로 갱신용 cowork-data-library 스킬을 설치했습니다.")
+    if "unavailable" in catalog_skills:
+        print("주의: cowork-data-library 스킬을 사용할 수 없습니다. 위 스킬 경로 안내를 확인하세요.")
     if args.update:
         print("기존 MCP·스킬 등록과 실행 경로를 유지했습니다. 사용 중인 에이전트에서 MCP를 다시 연결하거나 에이전트를 재시작하세요.")
     elif args.client != "cli":

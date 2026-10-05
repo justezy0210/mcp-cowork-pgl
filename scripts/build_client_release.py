@@ -33,10 +33,11 @@ def build(source, output):
     selected += sorted((source / "plans").glob("*.md"))
     selected += sorted((source / "src/cowork_hub").glob("*.py"))
     selected += sorted(
-        path for path in (source / "src/cowork_hub/web").rglob("*") if path.is_file()
+        path for path in (source / "src/cowork_hub/web/dist").rglob("*") if path.is_file()
     )
-    selected += sorted((source / "skills/cowork-jobs").rglob("*.md"))
-    selected += sorted((source / "skills/cowork-jobs").rglob("*.yaml"))
+    for skill in ("cowork-jobs", "cowork-data-library"):
+        for pattern in ("*.md", "*.yaml"):
+            selected += sorted((source / "skills" / skill).rglob(pattern))
     frontend = source / "frontend"
     selected += [frontend / name for name in (
         "package.json", "package-lock.json", "tsconfig.json", "vite.config.ts",

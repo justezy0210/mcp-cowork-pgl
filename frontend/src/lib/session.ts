@@ -5,8 +5,8 @@ import type { Profile, Enrollment } from "./types"
 type GoogleUser = { uid: string; email?: string; getIdToken(): Promise<string> }
 type Config = { enabled: boolean; api_base_url?: string; firebase: { projectId: string; [key: string]: unknown } }
 type AuthSDK = {
-  getAuth(app: unknown): unknown; browserSessionPersistence: unknown
-  setPersistence(auth: unknown, persistence: unknown): Promise<void>
+  initializeAuth(app: unknown, options: { persistence: unknown; popupRedirectResolver: unknown }): unknown
+  browserLocalPersistence: unknown; browserPopupRedirectResolver: unknown
   onAuthStateChanged(auth: unknown, callback: (user: GoogleUser | null) => void): () => void
   signOut(auth: unknown): Promise<void>
   signInWithPopup(auth: unknown, provider: unknown): Promise<unknown>
@@ -21,7 +21,10 @@ export class APIError extends Error {
   constructor(message: string, public code = "", public status = 0) { super(message) }
 }
 const CACHE = "cowork.profile.v1", MAX_AGE = 30 * 60 * 1000
-const clearCache = () => { try { sessionStorage.removeItem(CACHE) } catch { /* Optional storage. */ } }
+const clearCache = () => {
+  try { localStorage.removeItem(CACHE) } catch { /* Optional storage. */ }
+  try { sessionStorage.removeItem(CACHE) } catch { /* Clear the previous tab-only cache. */ }
+}
 const initial: State = { status: "loading", profile: null, user: null, enrollment: null, message: "", epoch: 0, busy: false }
 
 class Session {
@@ -34,15 +37,18 @@ class Session {
   private started?: Promise<void>
   private generation = 0
   private profileRequest = 0
+  private profilePending?: { generation: number; promise: Promise<void> }
+  private resources = new Map<string, { data: unknown; updated: Date }>()
   subscribe = (listener: () => void) => { this.listeners.add(listener); return () => { this.listeners.delete(listener) } }
   snapshot = () => this.state
   private update(patch: Partial<State>) { this.state = { ...this.state, ...patch }; this.listeners.forEach(listener => listener()) }
   private cached(user: GoogleUser): Profile | null {
     try {
-      const saved = JSON.parse(sessionStorage.getItem(CACHE) || "null"), p = saved?.profile
+      const saved = JSON.parse(localStorage.getItem(CACHE) || "null"), p = saved?.profile
       const age = Date.now() - saved?.savedAt
       if (saved?.scope === this.scope && saved.uid === user.uid && age >= 0 && age < MAX_AGE
         && typeof p?.user_id === "string" && typeof p.is_admin === "boolean"
+        && (p.can_view_catalog === undefined || typeof p.can_view_catalog === "boolean")
         && Array.isArray(p.allowed_nodes) && p.allowed_nodes.every((n: unknown) => typeof n === "string")
         && typeof p.identity?.configured === "boolean" && typeof p.notification?.configured === "boolean"
         && (!p.identity.configured || (Number.isInteger(p.identity.uid) && Number.isInteger(p.identity.gid)))) return p
@@ -50,9 +56,19 @@ class Session {
     clearCache(); return null
   }
   private save(user: GoogleUser, profile: Profile) {
-    const { user_id, is_admin, allowed_nodes, identity, notification } = profile
-    try { sessionStorage.setItem(CACHE, JSON.stringify({ scope: this.scope, uid: user.uid, savedAt: Date.now(),
-      profile: { user_id, is_admin, allowed_nodes, identity, notification: { configured: notification.configured } } })) } catch { /* Optional storage. */ }
+    const { user_id, is_admin, allowed_nodes, identity, notification, can_view_catalog } = profile
+    try { localStorage.setItem(CACHE, JSON.stringify({ scope: this.scope, uid: user.uid, savedAt: Date.now(),
+      profile: { user_id, is_admin, allowed_nodes, identity, notification: { configured: notification.configured }, can_view_catalog } })) } catch { /* Optional storage. */ }
+  }
+  cachedResource<T>(path: string | null): { data: T; updated: Date } | undefined {
+    const saved = path ? this.resources.get(path) : undefined
+    if (saved && Date.now() - saved.updated.getTime() < 30000) return saved as { data: T; updated: Date }
+    if (path) this.resources.delete(path)
+  }
+  saveResource(path: string, data: unknown, updated: Date) {
+    this.resources.delete(path)
+    this.resources.set(path, { data, updated })
+    if (this.resources.size > 50) this.resources.delete(this.resources.keys().next().value!)
   }
   start = () => this.started ||= this.initialize()
   private async initialize() {
@@ -70,11 +86,13 @@ class Session {
       const authUrl = "https://www.gstatic.com/firebasejs/12.19.0/firebase-auth.js"
       const [app, sdk] = await Promise.all([import(/* @vite-ignore */ appUrl), import(/* @vite-ignore */ authUrl)])
       this.sdk = sdk as AuthSDK
-      this.auth = this.sdk.getAuth(app.initializeApp(config.firebase))
-      await this.sdk.setPersistence(this.auth, this.sdk.browserSessionPersistence)
+      this.auth = this.sdk.initializeAuth(app.initializeApp(config.firebase), {
+        persistence: this.sdk.browserLocalPersistence, popupRedirectResolver: this.sdk.browserPopupRedirectResolver,
+      })
       this.sdk.onAuthStateChanged(this.auth, user => { void this.changeUser(user) })
       window.addEventListener("pagehide", () => {
         this.generation++
+        this.resources.clear()
         this.update({ profile: null, enrollment: null, epoch: this.state.epoch + 1, status: this.state.user ? "checking" : "login" })
       })
       window.addEventListener("pageshow", event => { if (event.persisted && this.state.user) void this.changeUser(this.state.user) })
@@ -82,6 +100,7 @@ class Session {
   }
   private async changeUser(user: GoogleUser | null) {
     this.generation++
+    this.resources.clear()
     this.update({ user, profile: null, enrollment: null, epoch: this.state.epoch + 1, message: "", busy: false, status: user ? "checking" : "login" })
     if (!user) { clearCache(); return }
     const cached = this.cached(user)
@@ -111,12 +130,20 @@ class Session {
     if (!response.ok) {
       const code = body?.error?.code || ""
       const error = new APIError(errors[code] || "요청을 처리하지 못했습니다. 잠시 후 다시 시도하세요.", code, response.status)
+      if (response.status === 401 || response.status === 403) this.resources.clear()
       if (response.status === 401) { void this.logout() }
       throw error
     }
     return body as T
   }
-  refreshProfile = async () => {
+  refreshProfile = () => {
+    if (this.profilePending?.generation === this.generation) return this.profilePending.promise
+    const pending = { generation: this.generation, promise: this.loadProfile() }
+    this.profilePending = pending
+    void pending.promise.finally(() => { if (this.profilePending === pending) this.profilePending = undefined })
+    return pending.promise
+  }
+  private loadProfile = async () => {
     const user = this.state.user, request = ++this.profileRequest
     let generation = this.generation
     if (!user) return
@@ -124,6 +151,7 @@ class Session {
     try {
       const profile = await this.request<Profile>("/profile")
       if (!valid()) return
+      if (profile.can_view_catalog === false) this.resources.clear()
       this.save(user, profile)
       this.update({ profile, status: "ready", message: "", enrollment: null })
     } catch (error) {
@@ -133,6 +161,7 @@ class Session {
         return
       }
       generation = ++this.generation
+      this.resources.clear()
       clearCache()
       this.update({ profile: null, enrollment: null, epoch: this.state.epoch + 1, status: "error", message: error instanceof Error ? error.message : "계정 확인에 실패했습니다." })
       if (error instanceof APIError && error.code === "WEB_ACCOUNT_NOT_LINKED") {
@@ -159,7 +188,7 @@ class Session {
   }
   logout = async () => {
     await this.changeUser(null)
-    try { await this.sdk?.signOut(this.auth) } catch { this.update({ message: "로그아웃을 마치려면 이 창을 닫아 주세요." }) }
+    try { await this.sdk?.signOut(this.auth) } catch { this.update({ message: "로그아웃을 완료하지 못했습니다. 페이지를 새로고침한 뒤 다시 시도해 주세요." }) }
   }
 }
 export const session = new Session()
